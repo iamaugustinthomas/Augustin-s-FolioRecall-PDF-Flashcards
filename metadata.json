@@ -1,0 +1,6 @@
+{
+  "name": "FolioRecall",
+  "description": "Offline-first, privacy-focused flashcard studio with local PDF odd/even page extraction, active recall testing, and exam-date spaced repetition.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
