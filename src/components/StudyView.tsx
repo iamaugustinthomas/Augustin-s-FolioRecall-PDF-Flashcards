@@ -1,5 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Award, Flame, Sparkles, Target, Volume2, VolumeX } from 'lucide-react';
+import {
+  Award,
+  Flame,
+  Maximize2,
+  Minimize2,
+  Sparkles,
+  Target,
+  Volume2,
+  VolumeX,
+} from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import type {
   Deck,
@@ -70,6 +79,7 @@ export const StudyView: React.FC<StudyViewProps> = ({
   const [queueIds, setQueueIds] = useState<string[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isRevealed, setIsRevealed] = useState(false);
+  const [isAnswerFullscreen, setIsAnswerFullscreen] = useState(false);
   const [showScratchpad, setShowScratchpad] = useState(false);
   const [recallNote, setRecallNote] = useState('');
   const [sessionStartMs, setSessionStartMs] = useState<number>(() => Date.now());
@@ -145,6 +155,7 @@ export const StudyView: React.FC<StudyViewProps> = ({
     setQueueIds(nextQueue);
     setCurrentIndex(0);
     setIsRevealed(false);
+    setIsAnswerFullscreen(false);
     setRecallNote('');
     setSessionStartMs(Date.now());
     setGradeCounts({ again: 0, hard: 0, good: 0, easy: 0 });
@@ -245,10 +256,12 @@ export const StudyView: React.FC<StudyViewProps> = ({
       if (rewardProfile.soundEnabled && !leveledUp) {
         playRewardSound('complete');
       }
+      setIsAnswerFullscreen(false);
       setCompletedRecord(record);
     } else {
       setCurrentIndex(nextIdx);
       setIsRevealed(false);
+      setIsAnswerFullscreen(false);
       setRecallNote('');
     }
   };
@@ -259,12 +272,22 @@ export const StudyView: React.FC<StudyViewProps> = ({
       if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') {
         return;
       }
+      if (e.key === 'Escape' && isAnswerFullscreen) {
+        e.preventDefault();
+        setIsAnswerFullscreen(false);
+        return;
+      }
       if (completedRecord || !currentCard) return;
 
       if (e.code === 'Space' && !isRevealed) {
         e.preventDefault();
         handleReveal();
       } else if (isRevealed) {
+        if (e.key === 'f' || e.key === 'F') {
+          e.preventDefault();
+          setIsAnswerFullscreen((v) => !v);
+          return;
+        }
         if (e.key === '1') void handleGrade('again');
         if (e.key === '2') void handleGrade('hard');
         if (e.key === '3') void handleGrade('good');
@@ -275,12 +298,13 @@ export const StudyView: React.FC<StudyViewProps> = ({
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRevealed, completedRecord, currentCard, currentIndex, queueIds]);
+  }, [isRevealed, isAnswerFullscreen, completedRecord, currentCard, currentIndex, queueIds]);
 
   const restartWithIds = (ids: string[]) => {
     setQueueIds(ids);
     setCurrentIndex(0);
     setIsRevealed(false);
+    setIsAnswerFullscreen(false);
     setRecallNote('');
     setSessionStartMs(Date.now());
     setGradeCounts({ again: 0, hard: 0, good: 0, easy: 0 });
@@ -355,10 +379,12 @@ export const StudyView: React.FC<StudyViewProps> = ({
         })
       : null;
 
+  const fullscreenSheetHeight = Math.max(460, viewportHeight - 175);
+
   return (
     <div className="space-y-3.5 relative">
       {/* Floating Per-Card Dopamine Reward Stamp */}
-      <div className="pointer-events-none fixed bottom-6 right-6 z-40">
+      <div className="pointer-events-none fixed bottom-6 right-6 z-[60]">
         <AnimatePresence mode="wait">
           {rewardToast && (
             <motion.div
@@ -822,11 +848,23 @@ export const StudyView: React.FC<StudyViewProps> = ({
             {/* Revealed Answer A4 Sheet */}
             {isRevealed && (
               <div className="paper-sheet rounded-md overflow-hidden p-2 bg-[#FCFBF7]">
-                <div className="px-3 py-1.5 border-b border-emerald-400/70 flex items-center justify-between font-mono text-[11px] text-[#166534]">
+                <div className="px-3 py-1.5 border-b border-emerald-400/70 flex items-center justify-between gap-2 font-mono text-[11px] text-[#166534]">
                   <span>ANSWER</span>
-                  <span>
-                    {currentCard.answerPage ? `PAGE ${currentCard.answerPage}` : 'CARD'}
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <span>
+                      {currentCard.answerPage ? `PAGE ${currentCard.answerPage}` : 'CARD'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsAnswerFullscreen(true)}
+                      aria-label="Open answer in fullscreen"
+                      title="Fullscreen Answer (Press F)"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded btn-ivory-tactile text-[11px] font-sans font-semibold text-[#1F1A14] cursor-pointer"
+                    >
+                      <Maximize2 className="w-3 h-3" aria-hidden="true" />
+                      <span>Fullscreen</span>
+                    </button>
+                  </div>
                 </div>
                 {currentCard.pdfFileId && currentCard.answerPage ? (
                   <div className="mt-1 border border-[#DED8C8]">
@@ -850,6 +888,163 @@ export const StudyView: React.FC<StudyViewProps> = ({
               </div>
             )}
           </div>
+
+          {/* Fullscreen Answer Inspection Modal */}
+          {isRevealed && isAnswerFullscreen && (
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Fullscreen Answer View"
+              className="fixed inset-0 z-50 bg-[#1B1510]/92 backdrop-blur-sm flex flex-col"
+            >
+              {/* Top Stitched Leather Bar */}
+              <div className="leather-bar border-b border-black/50 px-5 sm:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3 shrink-0">
+                <div className="flex items-center gap-3 font-mono text-xs text-[#FBF7EE] tabular-nums">
+                  <span className="px-2 py-0.5 rounded bg-emerald-700/80 border border-emerald-400/40 text-emerald-50 font-semibold">
+                    ANSWER {currentCard.answerPage ? `· PAGE ${currentCard.answerPage}` : ''}
+                  </span>
+                  <span className="text-[#D6CEC0] hidden sm:inline">
+                    {activeDeck.title} · Card {currentIndex + 1} of {queueIds.length}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2.5">
+                  <div className="recessed-well flex items-center p-1 rounded-lg gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setFitMode('contain')}
+                      className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-all whitespace-nowrap cursor-pointer ${
+                        fitMode === 'contain'
+                          ? 'btn-ivory-tactile'
+                          : 'text-[#564D40] hover:text-[#1F1A14]'
+                      }`}
+                    >
+                      Full Page
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFitMode('width')}
+                      className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-all whitespace-nowrap cursor-pointer ${
+                        fitMode === 'width'
+                          ? 'btn-ivory-tactile'
+                          : 'text-[#564D40] hover:text-[#1F1A14]'
+                      }`}
+                    >
+                      Fit Width
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsAnswerFullscreen(false)}
+                    className="px-3.5 py-1.5 text-xs font-semibold rounded-md btn-ivory-tactile inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Minimize2 className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>Exit Fullscreen</span>
+                    <span className="font-mono text-[10px] text-[#6B6153] hidden sm:inline">
+                      Esc
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Full-Viewport Answer Sheet */}
+              <div className="flex-1 overflow-auto p-3 sm:p-5 flex items-center justify-center">
+                <div className="w-full max-w-[1400px] paper-sheet rounded-md overflow-hidden p-2 bg-[#FCFBF7]">
+                  {currentCard.pdfFileId && currentCard.answerPage ? (
+                    <div className="border border-[#DED8C8]">
+                      <PdfPageCanvas
+                        pdfFileId={currentCard.pdfFileId}
+                        pageNumber={currentCard.answerPage}
+                        fitMode={fitMode}
+                        maxHeightPx={fullscreenSheetHeight}
+                        maxHeightClass={fitMode === 'width' ? 'max-h-[calc(100vh-175px)]' : ''}
+                      />
+                    </div>
+                  ) : currentCard.pdfFileId && !currentCard.answerPage ? (
+                    <div className="p-16 min-h-[360px] flex items-center justify-center text-center font-mono text-sm text-[#5B5245]">
+                      No even answer page follows page {currentCard.questionPage}.
+                    </div>
+                  ) : (
+                    <div className="p-12 sm:p-16 ruled-paper min-h-[55vh] flex items-center justify-center text-center text-2xl leading-relaxed text-[#1F1A14] whitespace-pre-wrap">
+                      {currentCard.answerText || 'No answer recorded.'}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Bottom Grading Keys Inside Fullscreen */}
+              {gradePreviews && (
+                <div className="border-t border-black/40 bg-[#251D16]/95 px-4 py-3 shrink-0">
+                  <div className="max-w-2xl mx-auto grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => void handleGrade('again')}
+                      className="btn-ivory-tactile rounded-lg px-3 py-2 text-center transition-all cursor-pointer"
+                    >
+                      <div className="flex items-center justify-center gap-1.5">
+                        <span className="text-sm font-bold text-[#B91C1C]">Forgot</span>
+                        <span className="font-mono text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#EAE4D6] text-[#5B5245] tabular-nums">
+                          +{rewardPreviewForGrade('again')?.totalXp ?? 5} XP
+                        </span>
+                      </div>
+                      <span className="block font-mono text-[11px] text-[#5B5245] mt-0.5 tabular-nums">
+                        1 · {gradePreviews.again.label}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => void handleGrade('hard')}
+                      className="btn-ivory-tactile rounded-lg px-3 py-2 text-center transition-all cursor-pointer"
+                    >
+                      <div className="flex items-center justify-center gap-1.5">
+                        <span className="text-sm font-bold text-[#B45309]">Hard</span>
+                        <span className="font-mono text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#FEF3C7] text-[#92400E] tabular-nums">
+                          +{rewardPreviewForGrade('hard')?.totalXp ?? 15} XP
+                        </span>
+                      </div>
+                      <span className="block font-mono text-[11px] text-[#5B5245] mt-0.5 tabular-nums">
+                        2 · {gradePreviews.hard.label}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => void handleGrade('good')}
+                      className="btn-ivory-tactile rounded-lg px-3 py-2 text-center transition-all cursor-pointer"
+                    >
+                      <div className="flex items-center justify-center gap-1.5">
+                        <span className="text-sm font-bold text-[#174BB8]">Good</span>
+                        <span className="font-mono text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#DBEAFE] text-[#1E40AF] tabular-nums">
+                          +{rewardPreviewForGrade('good')?.totalXp ?? 25} XP
+                        </span>
+                      </div>
+                      <span className="block font-mono text-[11px] text-[#5B5245] mt-0.5 tabular-nums">
+                        3 · {gradePreviews.good.label}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => void handleGrade('easy')}
+                      className="btn-ivory-tactile rounded-lg px-3 py-2 text-center transition-all cursor-pointer"
+                    >
+                      <div className="flex items-center justify-center gap-1.5">
+                        <span className="text-sm font-bold text-[#166534]">Easy</span>
+                        <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded brass-plaque tabular-nums">
+                          +{rewardPreviewForGrade('easy')?.totalXp ?? 35} XP
+                        </span>
+                      </div>
+                      <span className="block font-mono text-[11px] text-[#5B5245] mt-0.5 tabular-nums">
+                        4 · {gradePreviews.easy.label}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Physical Controls */}
           {!isRevealed ? (
