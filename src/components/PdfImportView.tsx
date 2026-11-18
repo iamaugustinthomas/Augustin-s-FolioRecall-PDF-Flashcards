@@ -1,15 +1,18 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Trash2, AlertCircle } from 'lucide-react';
-import type { StagedPdfFile } from '../types/flashcard';
+import type { Deck, Flashcard, StagedPdfFile } from '../types/flashcard';
 import { createSampleStudyPdf } from '../lib/pdfParser';
 import { DOCX_MIME } from '../lib/docxParser';
 import { buildCsvDrafts, createSampleStudyCsv } from '../lib/csvParser';
 import { isSupportedStudyFile, stageStudyFiles } from '../lib/documentFiles';
+import { buildDeckFileUpdatePlan } from '../lib/deckUpdater';
 import { getLocalDateString } from '../lib/spacedRepetition';
 import { DocumentPageView } from './DocumentPageView';
 
 interface PdfImportViewProps {
   initialFiles?: File[];
+  existingDecks?: Deck[];
+  existingCards?: Flashcard[];
   onSaveImportedDecks: (
     groups: Array<{
       title: string;
@@ -17,12 +20,20 @@ interface PdfImportViewProps {
       files: StagedPdfFile[];
     }>
   ) => Promise<void>;
+  onUpdateExistingDeck?: (
+    deckId: string,
+    stagedFiles: StagedPdfFile[],
+    removeMissing: boolean
+  ) => Promise<void>;
   onCancel: () => void;
 }
 
 export const PdfImportView: React.FC<PdfImportViewProps> = ({
   initialFiles,
+  existingDecks = [],
+  existingCards = [],
   onSaveImportedDecks,
+  onUpdateExistingDeck,
   onCancel,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -31,6 +42,9 @@ export const PdfImportView: React.FC<PdfImportViewProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [stagedFiles, setStagedFiles] = useState<StagedPdfFile[]>([]);
+  const [importTargetMode, setImportTargetMode] = useState<'new' | 'update'>('new');
+  const [targetDeckId, setTargetDeckId] = useState<string>(existingDecks[0]?.id ?? '');
+  const [removeMissing, setRemoveMissing] = useState(false);
   const [combineIntoOneDeck, setCombineIntoOneDeck] = useState(true);
   const [combinedTitle, setCombinedTitle] = useState('');
   const [perFileTitles, setPerFileTitles] = useState<Record<string, string>>({});
@@ -66,6 +80,15 @@ export const PdfImportView: React.FC<PdfImportViewProps> = ({
       } else {
         setCombinedTitle(`Study Deck (${results.length} Files)`);
       }
+
+      if (existingDecks.length > 0) {
+        const uploadedLower = new Set(results.map((r) => r.name.toLowerCase()));
+        const matchingDeck = existingDecks.find((d) =>
+          (d.sourceFiles ?? []).some((sf) => uploadedLower.has(sf.toLowerCase()))
+        );
+        setTargetDeckId((prev) => matchingDeck?.id ?? (prev || existingDecks[0].id));
+      }
+      setRemoveMissing(false);
     } catch (err) {
       setErrorMsg(
         err instanceof Error
@@ -165,10 +188,31 @@ export const PdfImportView: React.FC<PdfImportViewProps> = ({
 
   const totalPairCount = stagedFiles.reduce((acc, f) => acc + f.drafts.length, 0);
 
+  const selectedUpdateDeck = useMemo(
+    () => existingDecks.find((d) => d.id === targetDeckId) ?? existingDecks[0] ?? null,
+    [existingDecks, targetDeckId]
+  );
+
+  const updatePlan = useMemo(() => {
+    if (importTargetMode !== 'update' || !selectedUpdateDeck || stagedFiles.length === 0) {
+      return null;
+    }
+    return buildDeckFileUpdatePlan({
+      deck: selectedUpdateDeck,
+      existingCards: existingCards.filter((c) => c.deckId === selectedUpdateDeck.id),
+      stagedFiles,
+      removeMissing,
+    });
+  }, [importTargetMode, selectedUpdateDeck, existingCards, stagedFiles, removeMissing]);
+
   const handleSave = async () => {
     if (totalPairCount === 0) return;
     setIsSaving(true);
     try {
+      if (importTargetMode === 'update' && selectedUpdateDeck && onUpdateExistingDeck) {
+        await onUpdateExistingDeck(selectedUpdateDeck.id, stagedFiles, removeMissing);
+        return;
+      }
       if (combineIntoOneDeck || stagedFiles.length === 1) {
         await onSaveImportedDecks([
           {
@@ -295,91 +339,195 @@ export const PdfImportView: React.FC<PdfImportViewProps> = ({
                 </p>
               </div>
 
-              {stagedFiles.length > 1 && (
-                <div className="recessed-well flex items-center p-1 rounded-lg self-start gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setCombineIntoOneDeck(true)}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${
-                      combineIntoOneDeck
-                        ? 'btn-ivory-tactile'
-                        : 'text-[#564D40] hover:text-[#1F1A14]'
-                    }`}
-                  >
-                    One Deck
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCombineIntoOneDeck(false)}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${
-                      !combineIntoOneDeck
-                        ? 'btn-ivory-tactile'
-                        : 'text-[#564D40] hover:text-[#1F1A14]'
-                    }`}
-                  >
-                    Separate Decks
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {combineIntoOneDeck || stagedFiles.length === 1 ? (
-                <div className="md:col-span-2">
-                  <label
-                    htmlFor="imported-deck-title"
-                    className="block text-xs font-semibold text-[#564D40] mb-1.5"
-                  >
-                    Deck Name
-                  </label>
-                  <input
-                    id="imported-deck-title"
-                    type="text"
-                    value={combinedTitle}
-                    onChange={(e) => setCombinedTitle(e.target.value)}
-                    className="w-full px-3.5 py-2 text-sm rounded-md recessed-input text-[#1F1A14] focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]/35"
-                  />
-                </div>
-              ) : (
-                <div className="md:col-span-2 space-y-2">
-                  <span className="block text-xs font-semibold text-[#564D40]">Deck Names</span>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {stagedFiles.map((f) => (
-                      <input
-                        key={f.tempFileId}
-                        type="text"
-                        aria-label={`Deck title for ${f.name}`}
-                        value={perFileTitles[f.tempFileId] ?? ''}
-                        onChange={(e) =>
-                          setPerFileTitles((prev) => ({
-                            ...prev,
-                            [f.tempFileId]: e.target.value,
-                          }))
-                        }
-                        className="w-full px-3.5 py-2 text-sm rounded-md recessed-input text-[#1F1A14] focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]/35"
-                      />
-                    ))}
+              <div className="flex flex-wrap items-center gap-2.5 self-start">
+                {existingDecks.length > 0 && onUpdateExistingDeck && (
+                  <div className="recessed-well flex items-center p-1 rounded-lg gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setImportTargetMode('new')}
+                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                        importTargetMode === 'new'
+                          ? 'btn-ivory-tactile'
+                          : 'text-[#564D40] hover:text-[#1F1A14]'
+                      }`}
+                    >
+                      Create New Deck
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setImportTargetMode('update')}
+                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                        importTargetMode === 'update'
+                          ? 'btn-ivory-tactile'
+                          : 'text-[#564D40] hover:text-[#1F1A14]'
+                      }`}
+                    >
+                      Update Existing Deck
+                    </button>
                   </div>
-                </div>
-              )}
+                )}
 
-              <div>
-                <label
-                  htmlFor="imported-exam-date"
-                  className="block text-xs font-semibold text-[#564D40] mb-1.5"
-                >
-                  Target Exam Date
-                </label>
-                <input
-                  id="imported-exam-date"
-                  type="date"
-                  min={todayStr}
-                  value={examDate}
-                  onChange={(e) => setExamDate(e.target.value)}
-                  className="w-full px-3.5 py-2 text-sm rounded-md recessed-input text-[#1F1A14] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]/35"
-                />
+                {importTargetMode === 'new' && stagedFiles.length > 1 && (
+                  <div className="recessed-well flex items-center p-1 rounded-lg gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setCombineIntoOneDeck(true)}
+                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                        combineIntoOneDeck
+                          ? 'btn-ivory-tactile'
+                          : 'text-[#564D40] hover:text-[#1F1A14]'
+                      }`}
+                    >
+                      One Deck
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCombineIntoOneDeck(false)}
+                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                        !combineIntoOneDeck
+                          ? 'btn-ivory-tactile'
+                          : 'text-[#564D40] hover:text-[#1F1A14]'
+                      }`}
+                    >
+                      Separate Decks
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
+
+            {importTargetMode === 'update' && selectedUpdateDeck ? (
+              <div className="space-y-4">
+                <div>
+                  <label
+                    htmlFor="update-target-deck"
+                    className="block text-xs font-semibold text-[#564D40] mb-1.5"
+                  >
+                    Deck to Update (Preserves existing study progress &amp; intervals)
+                  </label>
+                  <select
+                    id="update-target-deck"
+                    value={selectedUpdateDeck.id}
+                    onChange={(e) => setTargetDeckId(e.target.value)}
+                    className="w-full px-3.5 py-2 text-sm font-semibold rounded-md btn-ivory-tactile cursor-pointer"
+                  >
+                    {existingDecks.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {updatePlan && (
+                  <>
+                    <div className="recessed-well rounded-lg grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-[#C3BBA9] text-center py-3">
+                      <div>
+                        <p className="font-mono text-lg font-semibold text-[#5B5245] tabular-nums">
+                          {updatePlan.unchangedCards.length}
+                        </p>
+                        <p className="text-[11px] font-medium text-[#564D40]">Unchanged</p>
+                      </div>
+                      <div>
+                        <p className="font-mono text-lg font-semibold text-[#174BB8] tabular-nums">
+                          {updatePlan.updatedCards.length}
+                        </p>
+                        <p className="text-[11px] font-medium text-[#564D40]">Updated / Fixes</p>
+                      </div>
+                      <div>
+                        <p className="font-mono text-lg font-semibold text-[#166534] tabular-nums">
+                          {updatePlan.addedCards.length}
+                        </p>
+                        <p className="text-[11px] font-medium text-[#564D40]">New Cards</p>
+                      </div>
+                      <div>
+                        <p className="font-mono text-lg font-semibold text-[#B45309] tabular-nums">
+                          {updatePlan.missingCards.length}
+                        </p>
+                        <p className="text-[11px] font-medium text-[#564D40]">Only in Old Deck</p>
+                      </div>
+                    </div>
+
+                    {updatePlan.missingCards.length > 0 && (
+                      <label className="recessed-well rounded-md px-3.5 py-2.5 flex items-center gap-2.5 text-xs text-[#1F1A14] cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={removeMissing}
+                          onChange={(e) => setRemoveMissing(e.target.checked)}
+                          className="rounded border-[#ACA391] text-[#B91C1C] cursor-pointer"
+                        />
+                        <span>
+                          Remove{' '}
+                          <strong className="font-semibold text-[#B91C1C]">
+                            {updatePlan.missingCards.length}
+                          </strong>{' '}
+                          existing {updatePlan.missingCards.length === 1 ? 'card' : 'cards'} not
+                          present in the uploaded file
+                        </span>
+                      </label>
+                    )}
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {combineIntoOneDeck || stagedFiles.length === 1 ? (
+                  <div className="md:col-span-2">
+                    <label
+                      htmlFor="imported-deck-title"
+                      className="block text-xs font-semibold text-[#564D40] mb-1.5"
+                    >
+                      Deck Name
+                    </label>
+                    <input
+                      id="imported-deck-title"
+                      type="text"
+                      value={combinedTitle}
+                      onChange={(e) => setCombinedTitle(e.target.value)}
+                      className="w-full px-3.5 py-2 text-sm rounded-md recessed-input text-[#1F1A14] focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]/35"
+                    />
+                  </div>
+                ) : (
+                  <div className="md:col-span-2 space-y-2">
+                    <span className="block text-xs font-semibold text-[#564D40]">Deck Names</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {stagedFiles.map((f) => (
+                        <input
+                          key={f.tempFileId}
+                          type="text"
+                          aria-label={`Deck title for ${f.name}`}
+                          value={perFileTitles[f.tempFileId] ?? ''}
+                          onChange={(e) =>
+                            setPerFileTitles((prev) => ({
+                              ...prev,
+                              [f.tempFileId]: e.target.value,
+                            }))
+                          }
+                          className="w-full px-3.5 py-2 text-sm rounded-md recessed-input text-[#1F1A14] focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]/35"
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label
+                    htmlFor="imported-exam-date"
+                    className="block text-xs font-semibold text-[#564D40] mb-1.5"
+                  >
+                    Target Exam Date
+                  </label>
+                  <input
+                    id="imported-exam-date"
+                    type="date"
+                    min={todayStr}
+                    value={examDate}
+                    onChange={(e) => setExamDate(e.target.value)}
+                    className="w-full px-3.5 py-2 text-sm rounded-md recessed-input text-[#1F1A14] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]/35"
+                  />
+                </div>
+              </div>
+            )}
 
             <div className="flex items-center justify-end gap-4 pt-1">
               <button
@@ -395,7 +543,13 @@ export const PdfImportView: React.FC<PdfImportViewProps> = ({
                 onClick={handleSave}
                 className="px-6 py-2 text-sm font-semibold rounded-md btn-primary-tactile transition-all cursor-pointer disabled:opacity-50"
               >
-                {isSaving ? 'Binding Deck…' : 'Save & Start Studying'}
+                {isSaving
+                  ? importTargetMode === 'update'
+                    ? 'Updating Deck…'
+                    : 'Binding Deck…'
+                  : importTargetMode === 'update'
+                  ? 'Update Deck & Start Studying'
+                  : 'Save & Start Studying'}
               </button>
             </div>
           </div>

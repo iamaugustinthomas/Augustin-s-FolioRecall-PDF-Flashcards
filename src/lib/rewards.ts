@@ -14,7 +14,11 @@ export interface RewardProfile {
   bestCombo: number;
   soundEnabled: boolean;
   voiceoverEnabled: boolean;
+  voicePreference: string; // 'auto' | 'male' | 'female' | exact SpeechSynthesisVoice.name
+  voicePitch: VoicePitchPreset;
 }
+
+export type VoicePitchPreset = 'deep' | 'natural' | 'bright';
 
 export interface RankInfo {
   level: number;
@@ -63,6 +67,8 @@ export function createDefaultRewardProfile(): RewardProfile {
     bestCombo: 0,
     soundEnabled: true,
     voiceoverEnabled: true,
+    voicePreference: 'auto',
+    voicePitch: 'deep',
   };
 }
 
@@ -541,20 +547,100 @@ export function evaluateSessionAnnouncerCallout(params: {
   };
 }
 
-let cachedAnnouncerVoice: SpeechSynthesisVoice | null = null;
+const MALE_VOICE_KEYWORDS = [
+  'google uk english male',
+  'male',
+  'daniel',
+  'alex',
+  'ryan',
+  'guy',
+  'david',
+  'george',
+  'arthur',
+  'oliver',
+  'thomas',
+  'mark',
+  'christopher',
+  'andrew',
+  'brian',
+  'eric',
+  'roger',
+  'steffan',
+  'fred',
+  'aaron',
+];
 
-function pickAnnouncerVoice(synth: SpeechSynthesis): SpeechSynthesisVoice | null {
+const FEMALE_VOICE_KEYWORDS = [
+  'google us english',
+  'google uk english female',
+  'female',
+  'aria',
+  'jenny',
+  'samantha',
+  'victoria',
+  'karen',
+  'serena',
+  'kate',
+  'libby',
+  'sonia',
+  'ava',
+  'emma',
+  'michelle',
+  'ana',
+  'zira',
+  'hazel',
+  'susan',
+  'moira',
+  'tessa',
+  'fiona',
+];
+
+export function getAvailableAnnouncerVoices(): SpeechSynthesisVoice[] {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return [];
+  try {
+    const voices = window.speechSynthesis.getVoices();
+    const sorted = [...voices].sort((a, b) => {
+      const aEn = a.lang.toLowerCase().startsWith('en') ? 0 : 1;
+      const bEn = b.lang.toLowerCase().startsWith('en') ? 0 : 1;
+      if (aEn !== bEn) return aEn - bEn;
+      return a.name.localeCompare(b.name);
+    });
+    return sorted;
+  } catch {
+    return [];
+  }
+}
+
+export function pickAnnouncerVoice(
+  synth: SpeechSynthesis,
+  preference: string = 'auto'
+): SpeechSynthesisVoice | null {
   const voices = synth.getVoices();
   if (!voices || voices.length === 0) return null;
 
-  if (cachedAnnouncerVoice && voices.some((v) => v.name === cachedAnnouncerVoice?.name)) {
-    return cachedAnnouncerVoice;
+  if (preference && preference !== 'auto' && preference !== 'male' && preference !== 'female') {
+    const exact = voices.find((v) => v.name === preference);
+    if (exact) return exact;
   }
 
   const englishVoices = voices.filter((v) => v.lang.toLowerCase().startsWith('en'));
   const pool = englishVoices.length > 0 ? englishVoices : voices;
 
-  const preferredKeywords = [
+  if (preference === 'male') {
+    for (const kw of MALE_VOICE_KEYWORDS) {
+      const match = pool.find((v) => v.name.toLowerCase().includes(kw));
+      if (match) return match;
+    }
+  }
+
+  if (preference === 'female') {
+    for (const kw of FEMALE_VOICE_KEYWORDS) {
+      const match = pool.find((v) => v.name.toLowerCase().includes(kw));
+      if (match) return match;
+    }
+  }
+
+  const autoPreferredKeywords = [
     'natural',
     'google us english',
     'google uk english male',
@@ -567,16 +653,12 @@ function pickAnnouncerVoice(synth: SpeechSynthesis): SpeechSynthesisVoice | null
     'samantha',
   ];
 
-  for (const kw of preferredKeywords) {
+  for (const kw of autoPreferredKeywords) {
     const match = pool.find((v) => v.name.toLowerCase().includes(kw));
-    if (match) {
-      cachedAnnouncerVoice = match;
-      return match;
-    }
+    if (match) return match;
   }
 
-  cachedAnnouncerVoice = pool[0] ?? null;
-  return cachedAnnouncerVoice;
+  return pool[0] ?? null;
 }
 
 export function playAnnouncerStinger(tier: AnnouncerTier): void {
@@ -619,12 +701,34 @@ export function playAnnouncerStinger(tier: AnnouncerTier): void {
   })();
 }
 
+function resolveVoicePitchValue(
+  preset: VoicePitchPreset,
+  tier: AnnouncerTier
+): number {
+  if (preset === 'natural') return 1.0;
+  if (preset === 'bright') return 1.12;
+  return tier === 'victory' || tier === 'rank' ? 0.9 : 0.86;
+}
+
 export function speakAnnouncerLine(
   text: string,
-  options?: { tier?: AnnouncerTier; withStinger?: boolean; delayMs?: number }
+  options?: {
+    tier?: AnnouncerTier;
+    withStinger?: boolean;
+    delayMs?: number;
+    voicePreference?: string;
+    voicePitch?: VoicePitchPreset;
+  }
 ): void {
   if (typeof window === 'undefined') return;
-  const { tier = 'streak', withStinger = true, delayMs = 95 } = options ?? {};
+  const savedProfile = loadRewardProfile();
+  const {
+    tier = 'streak',
+    withStinger = true,
+    delayMs = 95,
+    voicePreference = savedProfile.voicePreference,
+    voicePitch = savedProfile.voicePitch,
+  } = options ?? {};
 
   if (withStinger) {
     playAnnouncerStinger(tier);
@@ -637,12 +741,12 @@ export function speakAnnouncerLine(
       const synth = window.speechSynthesis;
       synth.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
-      const voice = pickAnnouncerVoice(synth);
+      const voice = pickAnnouncerVoice(synth, voicePreference);
       if (voice) {
         utterance.voice = voice;
       }
       utterance.lang = voice?.lang || 'en-US';
-      utterance.pitch = tier === 'victory' || tier === 'rank' ? 0.9 : 0.86;
+      utterance.pitch = resolveVoicePitchValue(voicePitch, tier);
       utterance.rate = 1.04;
       utterance.volume = 0.95;
       synth.speak(utterance);

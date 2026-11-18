@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Download, Upload, Trash2, X } from 'lucide-react';
+import { Download, Mic, Play, Trash2, Upload, Volume2, X } from 'lucide-react';
 import {
   clearAllLocalData,
   estimateStorageFootprint,
@@ -7,7 +7,17 @@ import {
   importBackup,
   type BackupPayload,
 } from '../lib/storage';
-import { resetRewardProfile } from '../lib/rewards';
+import {
+  getAvailableAnnouncerVoices,
+  pickAnnouncerVoice,
+  playRewardSound,
+  resetRewardProfile,
+  saveRewardProfile,
+  speakAnnouncerLine,
+  stopAnnouncerVoiceover,
+  type RewardProfile,
+  type VoicePitchPreset,
+} from '../lib/rewards';
 
 interface StorageModalProps {
   isOpen: boolean;
@@ -15,6 +25,8 @@ interface StorageModalProps {
   deckCount: number;
   cardCount: number;
   sessionCount: number;
+  rewardProfile: RewardProfile;
+  onUpdateRewardProfile: (next: RewardProfile) => void;
   onDataChanged: () => Promise<void>;
 }
 
@@ -24,21 +36,64 @@ export const StorageModal: React.FC<StorageModalProps> = ({
   deckCount,
   cardCount,
   sessionCount,
+  rewardProfile,
+  onUpdateRewardProfile,
   onDataChanged,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [usedBytes, setUsedBytes] = useState<number | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   useEffect(() => {
     if (!isOpen) return;
     setConfirmClear(false);
     setStatusMessage(null);
     void estimateStorageFootprint().then((res) => setUsedBytes(res.usedBytes));
+
+    const refreshVoices = () => {
+      setVoices(getAvailableAnnouncerVoices());
+    };
+    refreshVoices();
+
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.addEventListener('voiceschanged', refreshVoices);
+      return () => {
+        window.speechSynthesis.removeEventListener('voiceschanged', refreshVoices);
+      };
+    }
+    return undefined;
   }, [isOpen]);
 
   if (!isOpen) return null;
+
+  const updateProfile = (patch: Partial<RewardProfile>) => {
+    const next: RewardProfile = { ...rewardProfile, ...patch };
+    saveRewardProfile(next);
+    onUpdateRewardProfile(next);
+    return next;
+  };
+
+  const resolvedVoiceName =
+    typeof window !== 'undefined' && 'speechSynthesis' in window
+      ? pickAnnouncerVoice(window.speechSynthesis, rewardProfile.voicePreference)?.name ??
+        'System Default'
+      : 'Unavailable in this browser';
+
+  const handlePreviewVoice = () => {
+    const next =
+      !rewardProfile.soundEnabled || !rewardProfile.voiceoverEnabled
+        ? updateProfile({ soundEnabled: true, voiceoverEnabled: true })
+        : rewardProfile;
+    speakAnnouncerLine('Mega streak! Pro player!', {
+      tier: 'streak',
+      withStinger: true,
+      delayMs: 70,
+      voicePreference: next.voicePreference,
+      voicePitch: next.voicePitch,
+    });
+  };
 
   const formatBytes = (bytes: number | null) => {
     if (bytes === null) return 'Available';
@@ -94,22 +149,22 @@ export const StorageModal: React.FC<StorageModalProps> = ({
       aria-modal="true"
       aria-labelledby="storage-modal-title"
     >
-      <div className="paper-sheet rounded-lg max-w-md w-full p-6 space-y-5">
+      <div className="paper-sheet rounded-lg max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 space-y-5">
         <div className="flex items-start justify-between gap-4 pb-3 border-b border-[#E3DDD0]">
           <div>
             <h2
               id="storage-modal-title"
               className="font-serif-display text-xl font-semibold text-[#1F1A14]"
             >
-              On-Device Vault
+              Settings &amp; On-Device Vault
             </h2>
             <p className="font-mono text-xs text-[#6B6153] mt-0.5">
-              Stored privately in browser IndexedDB.
+              Customize announcer voiceovers &amp; manage local IndexedDB storage.
             </p>
           </div>
           <button
             type="button"
-            aria-label="Close storage dialog"
+            aria-label="Close settings dialog"
             onClick={onClose}
             className="p-1.5 text-[#7A6F5E] hover:text-[#1F1A14] cursor-pointer"
           >
@@ -117,6 +172,139 @@ export const StorageModal: React.FC<StorageModalProps> = ({
           </button>
         </div>
 
+        {/* Audio & Announcer Voice Settings */}
+        <section className="space-y-3 pb-4 border-b border-[#E3DDD0]">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="font-serif-display text-base font-semibold text-[#1F1A14]">
+              Audio &amp; Announcer Voice
+            </h3>
+            <button
+              type="button"
+              onClick={handlePreviewVoice}
+              className="px-3 py-1 text-xs font-semibold rounded-md btn-ivory-tactile inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <Play className="w-3 h-3" aria-hidden="true" />
+              <span>Test Voice</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <label className="recessed-well rounded-md px-3 py-2 flex items-center justify-between gap-2 text-xs font-medium text-[#1F1A14] cursor-pointer">
+              <span className="inline-flex items-center gap-2">
+                <Volume2 className="w-3.5 h-3.5 text-[#564D40]" aria-hidden="true" />
+                Reward Chimes
+              </span>
+              <input
+                type="checkbox"
+                checked={rewardProfile.soundEnabled}
+                onChange={(e) => {
+                  const enabled = e.target.checked;
+                  updateProfile({ soundEnabled: enabled });
+                  if (enabled) {
+                    playRewardSound('sound_on');
+                  } else {
+                    stopAnnouncerVoiceover();
+                  }
+                }}
+                className="rounded border-[#ACA391] text-[#194BB8] cursor-pointer"
+              />
+            </label>
+
+            <label className="recessed-well rounded-md px-3 py-2 flex items-center justify-between gap-2 text-xs font-medium text-[#1F1A14] cursor-pointer">
+              <span className="inline-flex items-center gap-2">
+                <Mic className="w-3.5 h-3.5 text-[#9A6B12]" aria-hidden="true" />
+                Voiceovers
+              </span>
+              <input
+                type="checkbox"
+                checked={rewardProfile.voiceoverEnabled}
+                onChange={(e) => {
+                  const enabled = e.target.checked;
+                  updateProfile({
+                    voiceoverEnabled: enabled,
+                    soundEnabled: enabled ? true : rewardProfile.soundEnabled,
+                  });
+                  if (!enabled) {
+                    stopAnnouncerVoiceover();
+                  }
+                }}
+                className="rounded border-[#ACA391] text-[#194BB8] cursor-pointer"
+              />
+            </label>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="sm:col-span-2">
+              <label
+                htmlFor="announcer-voice-select"
+                className="block text-xs font-semibold text-[#564D40] mb-1"
+              >
+                Announcer Voice
+              </label>
+              <select
+                id="announcer-voice-select"
+                value={rewardProfile.voicePreference}
+                onChange={(e) => {
+                  const voicePreference = e.target.value;
+                  updateProfile({
+                    voicePreference,
+                    voiceoverEnabled: true,
+                    soundEnabled: true,
+                  });
+                  speakAnnouncerLine('Voice selected!', {
+                    tier: 'skill',
+                    withStinger: false,
+                    delayMs: 40,
+                    voicePreference,
+                    voicePitch: rewardProfile.voicePitch,
+                  });
+                }}
+                className="w-full px-3 py-2 text-xs font-semibold rounded-md btn-ivory-tactile cursor-pointer"
+              >
+                <option value="auto">Auto (Best Available)</option>
+                <option value="male">Male Announcer (Auto-Match)</option>
+                <option value="female">Female Announcer (Auto-Match)</option>
+                {voices.length > 0 && (
+                  <optgroup label="Device Voices">
+                    {voices.map((v) => (
+                      <option key={`${v.name}::${v.lang}`} value={v.name}>
+                        {v.name} ({v.lang})
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+            </div>
+
+            <div>
+              <label
+                htmlFor="announcer-pitch-select"
+                className="block text-xs font-semibold text-[#564D40] mb-1"
+              >
+                Voice Tone
+              </label>
+              <select
+                id="announcer-pitch-select"
+                value={rewardProfile.voicePitch}
+                onChange={(e) => {
+                  const voicePitch = e.target.value as VoicePitchPreset;
+                  updateProfile({ voicePitch });
+                }}
+                className="w-full px-3 py-2 text-xs font-semibold rounded-md btn-ivory-tactile cursor-pointer"
+              >
+                <option value="deep">Deep Arcade</option>
+                <option value="natural">Natural</option>
+                <option value="bright">Crisp High</option>
+              </select>
+            </div>
+          </div>
+
+          <p className="font-mono text-[11px] text-[#6B6153]">
+            Active voice: <span className="text-[#1F1A14] font-semibold">{resolvedVoiceName}</span>
+          </p>
+        </section>
+
+        {/* Vault Footprint & Backups */}
         <div className="recessed-well rounded-lg grid grid-cols-4 divide-x divide-[#C3BBA9] text-center py-3">
           <div>
             <p className="font-mono text-base font-semibold text-[#1F1A14] tabular-nums">

@@ -8,6 +8,7 @@ import type {
   StudySessionRecord,
 } from './types/flashcard';
 import {
+  applyDeckFileUpdate,
   deleteCard,
   deleteDeckAndCards,
   getAllCards,
@@ -19,6 +20,10 @@ import {
   savePdfFiles,
   saveSession,
 } from './lib/storage';
+import {
+  buildDeckFileUpdatePlan,
+  type DeckFileUpdatePlan,
+} from './lib/deckUpdater';
 import {
   clearAllCachedStudyDocuments,
   clearCachedStudyDocument,
@@ -216,6 +221,43 @@ export default function App() {
     }
   };
 
+  const handleUpdateDeckFromFiles = async (params: {
+    deckId: string;
+    stagedFiles: StagedPdfFile[];
+    removeMissing: boolean;
+    navigateToStudy?: boolean;
+  }): Promise<DeckFileUpdatePlan | null> => {
+    const targetDeck = decks.find((d) => d.id === params.deckId);
+    if (!targetDeck) return null;
+
+    const existingDeckCards = cards.filter((c) => c.deckId === targetDeck.id);
+    const plan = buildDeckFileUpdatePlan({
+      deck: targetDeck,
+      existingCards: existingDeckCards,
+      stagedFiles: params.stagedFiles,
+      removeMissing: params.removeMissing,
+    });
+
+    const removedPdfIds = await applyDeckFileUpdate({
+      updatedDeck: plan.updatedDeck,
+      newPdfFiles: plan.newPdfFiles,
+      cardsToPut: plan.cardsToPut,
+      cardIdsToDelete: plan.cardIdsToDelete,
+    });
+    removedPdfIds.forEach((id) => clearCachedStudyDocument(id));
+
+    await loadLocalData();
+    setDroppedFiles(undefined);
+
+    if (params.navigateToStudy) {
+      setSelectedDeckId(targetDeck.id);
+      setStudyMode('due');
+      setActiveView('study');
+    }
+
+    return plan;
+  };
+
   const handleDropPdfFiles = async (files: File[]) => {
     setDroppedFiles(files);
     setActiveView('import');
@@ -348,6 +390,7 @@ export default function App() {
         hasCards={cards.length > 0}
         totalDue={totalDue}
         onQuickStartReview={handleQuickStartReview}
+        onOpenSettings={() => setIsStorageModalOpen(true)}
       />
 
       <main
@@ -388,7 +431,17 @@ export default function App() {
             {activeView === 'import' && (
               <PdfImportView
                 initialFiles={droppedFiles}
+                existingDecks={decks}
+                existingCards={cards}
                 onSaveImportedDecks={handleSaveImportedDecks}
+                onUpdateExistingDeck={async (deckId, stagedFiles, removeMissing) => {
+                  await handleUpdateDeckFromFiles({
+                    deckId,
+                    stagedFiles,
+                    removeMissing,
+                    navigateToStudy: true,
+                  });
+                }}
                 onCancel={() => {
                   setDroppedFiles(undefined);
                   setActiveView('decks');
@@ -436,6 +489,9 @@ export default function App() {
                 onSaveCard={handleSaveCard}
                 onDeleteCard={handleDeleteCard}
                 onRenameDeck={handleRenameDeck}
+                onUpdateDeckFromFiles={(params) =>
+                  handleUpdateDeckFromFiles({ ...params, navigateToStudy: false })
+                }
               />
             )}
           </>
@@ -450,7 +506,7 @@ export default function App() {
             onClick={() => setIsStorageModalOpen(true)}
             className="font-semibold text-[#1F1A14] hover:text-[#174BB8] underline underline-offset-4 transition-colors cursor-pointer"
           >
-            Storage &amp; Backups
+            Settings &amp; Storage
           </button>
         </div>
       </footer>
@@ -461,6 +517,8 @@ export default function App() {
         deckCount={decks.length}
         cardCount={cards.length}
         sessionCount={sessions.length}
+        rewardProfile={rewardProfile}
+        onUpdateRewardProfile={setRewardProfile}
         onDataChanged={async () => {
           clearAllCachedStudyDocuments();
           setRewardProfile(loadRewardProfile());

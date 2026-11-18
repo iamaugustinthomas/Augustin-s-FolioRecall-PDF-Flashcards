@@ -1,4 +1,5 @@
 import React from 'react';
+import { Settings } from 'lucide-react';
 import type { AppView } from '../types/flashcard';
 
 interface TopBarProps {
@@ -7,6 +8,7 @@ interface TopBarProps {
   hasCards: boolean;
   totalDue: number;
   onQuickStartReview: () => void;
+  onOpenSettings: () => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -15,6 +17,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   hasCards,
   totalDue,
   onQuickStartReview,
+  onOpenSettings,
 }) => {
   const navItems: Array<{ id: AppView; label: string }> = [
     { id: 'decks', label: 'Library' },
@@ -62,7 +65,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           })}
         </nav>
 
-        <div className="shrink-0">
+        <div className="shrink-0 flex items-center gap-2">
           {hasCards ? (
             <button
               type="button"
@@ -80,6 +83,15 @@ export const TopBar: React.FC<TopBarProps> = ({
               Add File
             </button>
           )}
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            aria-label="Open settings and storage"
+            title="Settings & Voice Picker"
+            className="p-2 rounded-md text-[#D6CEC0] hover:text-[#FFFDF7] hover:bg-black/25 transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FBF7EE]"
+          >
+            <Settings className="w-4 h-4" aria-hidden="true" />
+          </button>
         </div>
       </div>
     </header>

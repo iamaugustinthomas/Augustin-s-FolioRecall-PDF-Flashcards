@@ -191,6 +191,53 @@ export async function deleteCard(cardId: string): Promise<void> {
   });
 }
 
+export async function applyDeckFileUpdate(params: {
+  updatedDeck: Deck;
+  newPdfFiles: StoredPdfFile[];
+  cardsToPut: Flashcard[];
+  cardIdsToDelete: string[];
+}): Promise<string[]> {
+  const { updatedDeck, newPdfFiles, cardsToPut, cardIdsToDelete } = params;
+  return runTx(
+    [STORE_DECKS, STORE_CARDS, STORE_PDFS],
+    'readwrite',
+    async (tx) => {
+      await reqToPromise(tx.objectStore(STORE_DECKS).put(updatedDeck));
+
+      const pdfStore = tx.objectStore(STORE_PDFS);
+      for (const file of newPdfFiles) {
+        await reqToPromise(pdfStore.put(file));
+      }
+
+      const cardStore = tx.objectStore(STORE_CARDS);
+      for (const id of cardIdsToDelete) {
+        await reqToPromise(cardStore.delete(id));
+      }
+      for (const card of cardsToPut) {
+        await reqToPromise(cardStore.put(card));
+      }
+
+      // Garbage-collect replaced PDF/DOCX blobs no longer referenced by any card
+      const allCards = await reqToPromise<Flashcard[]>(cardStore.getAll());
+      const activePdfIds = new Set(
+        allCards.map((c) => c.pdfFileId).filter((id): id is string => Boolean(id))
+      );
+
+      const allPdfKeys = await reqToPromise<IDBValidKey[]>(pdfStore.getAllKeys());
+      const removedPdfIds: string[] = [];
+      for (const key of allPdfKeys) {
+        const id = String(key);
+        if (!activePdfIds.has(id)) {
+          await reqToPromise(pdfStore.delete(key));
+          removedPdfIds.push(id);
+        }
+      }
+
+      return removedPdfIds;
+    }
+  );
+}
+
 export async function getAllSessions(): Promise<StudySessionRecord[]> {
   return runTx(STORE_SESSIONS, 'readonly', async (tx) => {
     const items = await reqToPromise<StudySessionRecord[]>(

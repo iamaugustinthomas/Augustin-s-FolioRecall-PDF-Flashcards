@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
-import type { Deck, Flashcard } from '../types/flashcard';
+import type { Deck, Flashcard, StagedPdfFile } from '../types/flashcard';
 import { getLocalDateString } from '../lib/spacedRepetition';
+import type { DeckFileUpdatePlan } from '../lib/deckUpdater';
 import { DocumentPageView } from './DocumentPageView';
+import { DeckFileUpdaterPanel } from './DeckFileUpdaterPanel';
 
 interface DeckDetailViewProps {
   deck: Deck;
@@ -11,6 +13,11 @@ interface DeckDetailViewProps {
   onSaveCard: (card: Flashcard) => Promise<void>;
   onDeleteCard: (cardId: string) => Promise<void>;
   onRenameDeck: (deckId: string, title: string, description: string) => Promise<void>;
+  onUpdateDeckFromFiles: (params: {
+    deckId: string;
+    stagedFiles: StagedPdfFile[];
+    removeMissing: boolean;
+  }) => Promise<DeckFileUpdatePlan | null>;
 }
 
 export const DeckDetailView: React.FC<DeckDetailViewProps> = ({
@@ -20,6 +27,7 @@ export const DeckDetailView: React.FC<DeckDetailViewProps> = ({
   onSaveCard,
   onDeleteCard,
   onRenameDeck,
+  onUpdateDeckFromFiles,
 }) => {
   const [deckTitle, setDeckTitle] = useState(deck.title);
   const [deckDesc, setDeckDesc] = useState(deck.description);
@@ -132,6 +140,13 @@ export const DeckDetailView: React.FC<DeckDetailViewProps> = ({
           </button>
         </div>
       </form>
+
+      {/* Update Deck from Revised File */}
+      <DeckFileUpdaterPanel
+        deck={deck}
+        existingCards={cards}
+        onApplyUpdate={onUpdateDeckFromFiles}
+      />
 
       {/* Add Card Manually */}
       <form onSubmit={handleAddManualCard} className="paper-sheet rounded-lg p-6 space-y-4">
