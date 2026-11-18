@@ -3,11 +3,14 @@ import {
   Award,
   Flame,
   Maximize2,
+  Mic,
+  MicOff,
   Minimize2,
   Sparkles,
   Target,
   Volume2,
   VolumeX,
+  Zap,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import type {
@@ -25,16 +28,20 @@ import {
 } from '../lib/spacedRepetition';
 import {
   computeCardReward,
+  evaluateCardAnnouncerCallout,
+  evaluateSessionAnnouncerCallout,
   getComboMultiplier,
   getRankInfo,
   playCardRewardSequence,
   playRewardSound,
   recordCardReward,
+  speakAnnouncerLine,
+  type AnnouncerCallout,
   type CardRewardOutcome,
   type RankInfo,
   type RewardProfile,
 } from '../lib/rewards';
-import { PdfPageCanvas } from './PdfPageCanvas';
+import { DocumentPageView } from './DocumentPageView';
 import { MetricTooltip } from './MetricTooltip';
 
 interface StudyViewProps {
@@ -45,6 +52,7 @@ interface StudyViewProps {
   rewardProfile: RewardProfile;
   onRewardProfileUpdated: (next: RewardProfile) => void;
   onToggleSound: () => void;
+  onToggleVoiceover: () => void;
   onSelectDeck: (deckId: string) => void;
   onCardUpdated: (updated: Flashcard) => Promise<void>;
   onSessionCompleted: (session: StudySessionRecord) => Promise<void>;
@@ -60,6 +68,7 @@ export const StudyView: React.FC<StudyViewProps> = ({
   rewardProfile,
   onRewardProfileUpdated,
   onToggleSound,
+  onToggleVoiceover,
   onSelectDeck,
   onCardUpdated,
   onSessionCompleted,
@@ -93,13 +102,20 @@ export const StudyView: React.FC<StudyViewProps> = ({
   const [completedRecord, setCompletedRecord] = useState<StudySessionRecord | null>(null);
   const [sessionXp, setSessionXp] = useState(0);
   const [combo, setCombo] = useState(0);
+  const [easyStreak, setEasyStreak] = useState(0);
   const [bestSessionCombo, setBestSessionCombo] = useState(0);
   const [rewardToast, setRewardToast] = useState<{
     reward: CardRewardOutcome;
     leveledUp: boolean;
     newRank: RankInfo;
   } | null>(null);
+  const [announcerCallout, setAnnouncerCallout] = useState<AnnouncerCallout | null>(null);
+  const [sessionVictoryCallout, setSessionVictoryCallout] = useState<AnnouncerCallout | null>(
+    null
+  );
   const toastTimerRef = useRef<number | null>(null);
+  const calloutTimerRef = useRef<number | null>(null);
+  const cardShownAtRef = useRef<number>(Date.now());
 
   useEffect(() => {
     const onResize = () => setViewportHeight(window.innerHeight);
@@ -107,6 +123,7 @@ export const StudyView: React.FC<StudyViewProps> = ({
     return () => {
       window.removeEventListener('resize', onResize);
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+      if (calloutTimerRef.current) window.clearTimeout(calloutTimerRef.current);
     };
   }, []);
 
@@ -163,8 +180,12 @@ export const StudyView: React.FC<StudyViewProps> = ({
     setCompletedRecord(null);
     setSessionXp(0);
     setCombo(0);
+    setEasyStreak(0);
     setBestSessionCombo(0);
     setRewardToast(null);
+    setAnnouncerCallout(null);
+    setSessionVictoryCallout(null);
+    cardShownAtRef.current = Date.now();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeDeck?.id, mode]);
 
@@ -180,13 +201,32 @@ export const StudyView: React.FC<StudyViewProps> = ({
     setIsRevealed(true);
   };
 
+  const triggerCalloutBanner = (callout: AnnouncerCallout, durationMs: number = 2300) => {
+    setAnnouncerCallout(callout);
+    if (calloutTimerRef.current) window.clearTimeout(calloutTimerRef.current);
+    calloutTimerRef.current = window.setTimeout(() => {
+      setAnnouncerCallout(null);
+    }, durationMs);
+  };
+
   const handleGrade = async (grade: RecallGrade) => {
     if (!currentCard || !activeDeck) return;
+
+    const usedScratchpad = recallNote.trim().length > 0;
+    const nextEasyStreak = grade === 'easy' ? easyStreak + 1 : 0;
+    const responseSeconds = Math.max(
+      1,
+      Math.round((Date.now() - cardShownAtRef.current) / 1000)
+    );
+    const isComeback =
+      currentCard.lapses > 0 ||
+      currentCard.lastGrade === 'again' ||
+      missedIds.includes(currentCard.id);
 
     const reward = computeCardReward({
       grade,
       currentCombo: combo,
-      usedScratchpad: recallNote.trim().length > 0,
+      usedScratchpad,
       isNewCard: currentCard.reps === 0,
     });
     const prevTodayCount = rewardProfile.todayCardsReviewed;
@@ -195,16 +235,31 @@ export const StudyView: React.FC<StudyViewProps> = ({
       prevTodayCount < rewardProfile.dailyGoal &&
       updatedProfile.todayCardsReviewed >= updatedProfile.dailyGoal;
 
+    const nextBestCombo = Math.max(bestSessionCombo, reward.nextCombo);
+
     onRewardProfileUpdated(updatedProfile);
     setSessionXp((prev) => prev + reward.totalXp);
     setCombo(reward.nextCombo);
-    setBestSessionCombo((prev) => Math.max(prev, reward.nextCombo));
+    setEasyStreak(nextEasyStreak);
+    setBestSessionCombo(nextBestCombo);
 
     setRewardToast({ reward, leveledUp, newRank });
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
     toastTimerRef.current = window.setTimeout(() => {
       setRewardToast(null);
     }, 1900);
+
+    const cardCallout = evaluateCardAnnouncerCallout({
+      reward,
+      leveledUp,
+      newRank,
+      hitDailyGoal,
+      dailyGoal: rewardProfile.dailyGoal,
+      easyStreak: nextEasyStreak,
+      usedScratchpad,
+      isComeback,
+      responseSeconds,
+    });
 
     if (rewardProfile.soundEnabled) {
       playCardRewardSequence({
@@ -253,16 +308,48 @@ export const StudyView: React.FC<StudyViewProps> = ({
         scorePercent,
       };
       await onSessionCompleted(record);
-      if (rewardProfile.soundEnabled && !leveledUp) {
-        playRewardSound('complete');
+
+      const victoryCallout = evaluateSessionAnnouncerCallout({
+        scorePercent,
+        totalCards: totalReviewed,
+        bestSessionCombo: nextBestCombo,
+      });
+      setSessionVictoryCallout(victoryCallout);
+
+      const chosenEndCallout = leveledUp && cardCallout ? cardCallout : victoryCallout;
+      triggerCalloutBanner(chosenEndCallout, 2800);
+
+      if (rewardProfile.soundEnabled) {
+        if (!leveledUp) {
+          playRewardSound('complete');
+        }
+        if (rewardProfile.voiceoverEnabled) {
+          speakAnnouncerLine(chosenEndCallout.speechText, {
+            tier: chosenEndCallout.tier,
+            withStinger: true,
+            delayMs: leveledUp ? 220 : 140,
+          });
+        }
       }
+
       setIsAnswerFullscreen(false);
       setCompletedRecord(record);
     } else {
+      if (cardCallout) {
+        triggerCalloutBanner(cardCallout, 2300);
+        if (rewardProfile.soundEnabled && rewardProfile.voiceoverEnabled) {
+          speakAnnouncerLine(cardCallout.speechText, {
+            tier: cardCallout.tier,
+            withStinger: true,
+            delayMs: 110,
+          });
+        }
+      }
       setCurrentIndex(nextIdx);
       setIsRevealed(false);
       setIsAnswerFullscreen(false);
       setRecallNote('');
+      cardShownAtRef.current = Date.now();
     }
   };
 
@@ -312,8 +399,12 @@ export const StudyView: React.FC<StudyViewProps> = ({
     setCompletedRecord(null);
     setSessionXp(0);
     setCombo(0);
+    setEasyStreak(0);
     setBestSessionCombo(0);
     setRewardToast(null);
+    setAnnouncerCallout(null);
+    setSessionVictoryCallout(null);
+    cardShownAtRef.current = Date.now();
   };
 
   if (!activeDeck) {
@@ -383,6 +474,35 @@ export const StudyView: React.FC<StudyViewProps> = ({
 
   return (
     <div className="space-y-3.5 relative">
+      {/* Game Announcer Voiceover Callout Plaque */}
+      <div className="pointer-events-none fixed top-20 left-1/2 -translate-x-1/2 z-[70] px-4">
+        <AnimatePresence mode="wait">
+          {announcerCallout && (
+            <motion.div
+              key={announcerCallout.id}
+              initial={{ opacity: 0, y: -20, scale: 0.82 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -12, scale: 0.92 }}
+              transition={{ type: 'spring', stiffness: 460, damping: 24 }}
+              className="leather-bar rounded-xl border border-[#D4B465] px-5 py-2.5 shadow-[0_20px_42px_-10px_rgba(12,8,4,0.65)] flex items-center gap-3.5"
+            >
+              <span className="brass-plaque rounded-md px-2.5 py-1 font-mono text-[11px] font-bold tracking-wider inline-flex items-center gap-1 shrink-0">
+                <Zap className="w-3.5 h-3.5" aria-hidden="true" />
+                {announcerCallout.badge}
+              </span>
+              <div className="min-w-0">
+                <p className="font-serif-display text-lg font-bold tracking-wide text-[#FFF7E2] leading-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.65)]">
+                  {announcerCallout.displayTitle}
+                </p>
+                <p className="font-mono text-[11px] text-[#E6D5A9] mt-1">
+                  {announcerCallout.subtitle}
+                </p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
       {/* Floating Per-Card Dopamine Reward Stamp */}
       <div className="pointer-events-none fixed bottom-6 right-6 z-[60]">
         <AnimatePresence mode="wait">
@@ -545,19 +665,48 @@ export const StudyView: React.FC<StudyViewProps> = ({
             </span>
           </MetricTooltip>
 
-          <button
-            type="button"
-            onClick={onToggleSound}
-            aria-label={rewardProfile.soundEnabled ? 'Mute reward chimes' : 'Enable reward chimes'}
-            title={rewardProfile.soundEnabled ? 'Reward sounds on' : 'Reward sounds muted'}
-            className="p-1 rounded hover:bg-[#EAE4D6] text-[#564D40] hover:text-[#1F1A14] transition-colors cursor-pointer"
-          >
-            {rewardProfile.soundEnabled ? (
-              <Volume2 className="w-3.5 h-3.5" aria-hidden="true" />
-            ) : (
-              <VolumeX className="w-3.5 h-3.5" aria-hidden="true" />
-            )}
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={onToggleSound}
+              aria-label={rewardProfile.soundEnabled ? 'Mute reward chimes' : 'Enable reward chimes'}
+              title={rewardProfile.soundEnabled ? 'Reward sounds on' : 'Reward sounds muted'}
+              className="p-1 rounded hover:bg-[#EAE4D6] text-[#564D40] hover:text-[#1F1A14] transition-colors cursor-pointer"
+            >
+              {rewardProfile.soundEnabled ? (
+                <Volume2 className="w-3.5 h-3.5" aria-hidden="true" />
+              ) : (
+                <VolumeX className="w-3.5 h-3.5" aria-hidden="true" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={onToggleVoiceover}
+              aria-label={
+                rewardProfile.soundEnabled && rewardProfile.voiceoverEnabled
+                  ? 'Mute announcer voiceovers'
+                  : 'Enable announcer voiceovers'
+              }
+              title={
+                rewardProfile.soundEnabled && rewardProfile.voiceoverEnabled
+                  ? 'Announcer voiceovers on (Mega Streak, Pro Player)'
+                  : 'Announcer voiceovers muted'
+              }
+              className={`px-1.5 py-0.5 rounded inline-flex items-center gap-1 font-mono text-[10px] font-semibold transition-colors cursor-pointer ${
+                rewardProfile.soundEnabled && rewardProfile.voiceoverEnabled
+                  ? 'bg-[#FDF4DC] text-[#9A6B12] border border-[#D4B465] hover:bg-[#FAEBBE]'
+                  : 'hover:bg-[#EAE4D6] text-[#7A6F5E]'
+              }`}
+            >
+              {rewardProfile.soundEnabled && rewardProfile.voiceoverEnabled ? (
+                <Mic className="w-3 h-3" aria-hidden="true" />
+              ) : (
+                <MicOff className="w-3 h-3" aria-hidden="true" />
+              )}
+              <span className="hidden xl:inline">Voice</span>
+            </button>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
@@ -615,6 +764,14 @@ export const StudyView: React.FC<StudyViewProps> = ({
       {completedRecord ? (
         <section className="max-w-lg mx-auto paper-sheet rounded-lg p-8 sm:p-10 text-center space-y-6 my-6">
           <div className="space-y-1">
+            {sessionVictoryCallout && (
+              <div className="flex justify-center pb-2">
+                <span className="brass-plaque rounded-md px-3 py-1 font-mono text-[11px] font-bold inline-flex items-center gap-1.5">
+                  <Zap className="w-3.5 h-3.5" aria-hidden="true" />
+                  {sessionVictoryCallout.displayTitle}
+                </span>
+              </div>
+            )}
             <p className="font-mono text-xs text-[#6B6153]">{completedRecord.deckTitle}</p>
             <div className="flex justify-center">
               <MetricTooltip
@@ -830,8 +987,10 @@ export const StudyView: React.FC<StudyViewProps> = ({
               </div>
               {currentCard.pdfFileId && currentCard.questionPage ? (
                 <div className="mt-1 border border-[#DED8C8]">
-                  <PdfPageCanvas
-                    pdfFileId={currentCard.pdfFileId}
+                  <DocumentPageView
+                    fileId={currentCard.pdfFileId}
+                    documentKind={currentCard.documentKind}
+                    sourceFileName={currentCard.sourceFileName}
                     pageNumber={currentCard.questionPage}
                     fitMode={fitMode}
                     maxHeightPx={availableSheetHeight}
@@ -868,8 +1027,10 @@ export const StudyView: React.FC<StudyViewProps> = ({
                 </div>
                 {currentCard.pdfFileId && currentCard.answerPage ? (
                   <div className="mt-1 border border-[#DED8C8]">
-                    <PdfPageCanvas
-                      pdfFileId={currentCard.pdfFileId}
+                    <DocumentPageView
+                      fileId={currentCard.pdfFileId}
+                      documentKind={currentCard.documentKind}
+                      sourceFileName={currentCard.sourceFileName}
                       pageNumber={currentCard.answerPage}
                       fitMode={fitMode}
                       maxHeightPx={availableSheetHeight}
@@ -953,8 +1114,10 @@ export const StudyView: React.FC<StudyViewProps> = ({
                 <div className="w-full max-w-[1400px] paper-sheet rounded-md overflow-hidden p-2 bg-[#FCFBF7]">
                   {currentCard.pdfFileId && currentCard.answerPage ? (
                     <div className="border border-[#DED8C8]">
-                      <PdfPageCanvas
-                        pdfFileId={currentCard.pdfFileId}
+                      <DocumentPageView
+                        fileId={currentCard.pdfFileId}
+                        documentKind={currentCard.documentKind}
+                        sourceFileName={currentCard.sourceFileName}
                         pageNumber={currentCard.answerPage}
                         fitMode={fitMode}
                         maxHeightPx={fullscreenSheetHeight}

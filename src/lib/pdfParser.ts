@@ -89,6 +89,8 @@ export async function stagePdfFiles(files: File[]): Promise<StagedPdfFile[]> {
       name: file.name,
       size: file.size,
       pageCount,
+      mimeType: file.type || 'application/pdf',
+      documentKind: 'pdf',
       data: buffer,
       drafts,
     });

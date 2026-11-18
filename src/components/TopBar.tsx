@@ -18,7 +18,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 }) => {
   const navItems: Array<{ id: AppView; label: string }> = [
     { id: 'decks', label: 'Library' },
-    { id: 'import', label: 'Add PDF' },
+    { id: 'import', label: 'Add File' },
     { id: 'study', label: 'Study' },
     { id: 'exam', label: 'Exam Plan' },
   ];
@@ -77,7 +77,7 @@ export const TopBar: React.FC<TopBarProps> = ({
               onClick={() => onNavigate('import')}
               className="px-4 py-1.5 text-[13px] font-semibold rounded-md btn-primary-tactile transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer"
             >
-              Add PDF
+              Add File
             </button>
           )}
         </div>

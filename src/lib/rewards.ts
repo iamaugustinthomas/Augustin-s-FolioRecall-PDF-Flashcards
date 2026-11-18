@@ -13,6 +13,7 @@ export interface RewardProfile {
   dailyGoal: number;
   bestCombo: number;
   soundEnabled: boolean;
+  voiceoverEnabled: boolean;
 }
 
 export interface RankInfo {
@@ -61,6 +62,7 @@ export function createDefaultRewardProfile(): RewardProfile {
     dailyGoal: 20,
     bestCombo: 0,
     soundEnabled: true,
+    voiceoverEnabled: true,
   };
 }
 
@@ -311,6 +313,360 @@ export type RewardSoundKind =
   | 'levelup'
   | 'complete'
   | 'sound_on';
+
+export type AnnouncerTier = 'streak' | 'skill' | 'milestone' | 'rank' | 'victory';
+
+export interface AnnouncerCallout {
+  id: string;
+  tier: AnnouncerTier;
+  badge: string;
+  displayTitle: string;
+  subtitle: string;
+  speechText: string;
+}
+
+export function evaluateCardAnnouncerCallout(params: {
+  reward: CardRewardOutcome;
+  leveledUp: boolean;
+  newRank: RankInfo;
+  hitDailyGoal: boolean;
+  dailyGoal: number;
+  easyStreak: number;
+  usedScratchpad: boolean;
+  isComeback: boolean;
+  responseSeconds: number;
+}): AnnouncerCallout | null {
+  const {
+    reward,
+    leveledUp,
+    newRank,
+    hitDailyGoal,
+    dailyGoal,
+    easyStreak,
+    usedScratchpad,
+    isComeback,
+    responseSeconds,
+  } = params;
+
+  if (leveledUp) {
+    return {
+      id: crypto.randomUUID(),
+      tier: 'rank',
+      badge: `RANK UP · LV.${newRank.level}`,
+      displayTitle: `${newRank.title.toUpperCase()}!`,
+      subtitle: 'Scholar rank promoted',
+      speechText: `Rank up! Promoted to ${newRank.title}!`,
+    };
+  }
+
+  if (hitDailyGoal) {
+    return {
+      id: crypto.randomUUID(),
+      tier: 'milestone',
+      badge: 'DAILY TARGET',
+      displayTitle: 'GOAL CRUSHED!',
+      subtitle: `${dailyGoal} cards mastered today`,
+      speechText: `Daily goal crushed! ${dailyGoal} cards mastered!`,
+    };
+  }
+
+  const combo = reward.nextCombo;
+
+  if (combo >= 15 && combo % 5 === 0) {
+    return {
+      id: crypto.randomUUID(),
+      tier: 'streak',
+      badge: `${combo}× STREAK`,
+      displayTitle: 'GODLIKE RECALL!',
+      subtitle: '2.0× XP overdrive active',
+      speechText: 'Godlike recall!',
+    };
+  }
+
+  if (combo === 12) {
+    return {
+      id: crypto.randomUUID(),
+      tier: 'streak',
+      badge: '12× STREAK',
+      displayTitle: 'DOMINATING!',
+      subtitle: 'Unbroken recall mastery',
+      speechText: 'Dominating!',
+    };
+  }
+
+  if (combo === 10) {
+    return {
+      id: crypto.randomUUID(),
+      tier: 'streak',
+      badge: '10× STREAK',
+      displayTitle: 'PRO PLAYER!',
+      subtitle: 'Double-digit recall streak',
+      speechText: 'Pro player!',
+    };
+  }
+
+  if (combo === 8) {
+    return {
+      id: crypto.randomUUID(),
+      tier: 'streak',
+      badge: '8× STREAK',
+      displayTitle: 'UNSTOPPABLE!',
+      subtitle: 'Maximum 2.0× XP multiplier',
+      speechText: 'Unstoppable!',
+    };
+  }
+
+  if (combo === 5) {
+    return {
+      id: crypto.randomUUID(),
+      tier: 'streak',
+      badge: '5× STREAK',
+      displayTitle: 'MEGA STREAK!',
+      subtitle: '1.5× XP multiplier unlocked',
+      speechText: 'Mega streak!',
+    };
+  }
+
+  if (combo === 3) {
+    return {
+      id: crypto.randomUUID(),
+      tier: 'streak',
+      badge: '3× STREAK',
+      displayTitle: 'TRIPLE STREAK!',
+      subtitle: '1.25× XP multiplier active',
+      speechText: 'Triple streak!',
+    };
+  }
+
+  if (combo === 2 && (reward.grade === 'easy' || reward.grade === 'good')) {
+    return {
+      id: crypto.randomUUID(),
+      tier: 'streak',
+      badge: '2× COMBO',
+      displayTitle: 'DOUBLE RECALL!',
+      subtitle: 'One more for 1.25× XP',
+      speechText: 'Double recall!',
+    };
+  }
+
+  if (isComeback && (reward.grade === 'good' || reward.grade === 'easy')) {
+    return {
+      id: crypto.randomUUID(),
+      tier: 'skill',
+      badge: 'REDEMPTION',
+      displayTitle: 'CLUTCH COMEBACK!',
+      subtitle: 'Previously missed card conquered',
+      speechText: 'Clutch comeback!',
+    };
+  }
+
+  if (
+    reward.grade === 'easy' &&
+    (easyStreak >= 3 || (combo >= 2 && responseSeconds <= 7))
+  ) {
+    return {
+      id: crypto.randomUUID(),
+      tier: 'skill',
+      badge: easyStreak >= 3 ? `${easyStreak}× EASY` : `${responseSeconds}s SPEED`,
+      displayTitle: 'PRO PLAYER!',
+      subtitle:
+        easyStreak >= 3
+          ? 'Consecutive effortless recalls'
+          : 'Lightning-fast effortless recall',
+      speechText: 'Pro player!',
+    };
+  }
+
+  if (reward.grade === 'easy' && usedScratchpad) {
+    return {
+      id: crypto.randomUUID(),
+      tier: 'skill',
+      badge: 'ACTIVE NOTES',
+      displayTitle: 'MASTERMIND!',
+      subtitle: 'Written recall + effortless grade',
+      speechText: 'Mastermind!',
+    };
+  }
+
+  return null;
+}
+
+export function evaluateSessionAnnouncerCallout(params: {
+  scorePercent: number;
+  totalCards: number;
+  bestSessionCombo: number;
+}): AnnouncerCallout {
+  const { scorePercent, totalCards, bestSessionCombo } = params;
+
+  if (scorePercent === 100 && totalCards >= 3) {
+    return {
+      id: crypto.randomUUID(),
+      tier: 'victory',
+      badge: '100% ACCURACY',
+      displayTitle: 'FLAWLESS VICTORY!',
+      subtitle: `${totalCards} cards · Pro Player performance`,
+      speechText: 'Flawless victory! Pro player!',
+    };
+  }
+
+  if (scorePercent >= 90 && totalCards >= 2) {
+    return {
+      id: crypto.randomUUID(),
+      tier: 'victory',
+      badge: `${scorePercent}% SCORE`,
+      displayTitle: 'PRO PLAYER!',
+      subtitle: `Best streak ${bestSessionCombo}× · Session dominated`,
+      speechText: 'Pro player! Session dominated!',
+    };
+  }
+
+  if (scorePercent >= 75) {
+    return {
+      id: crypto.randomUUID(),
+      tier: 'victory',
+      badge: `${scorePercent}% SCORE`,
+      displayTitle: 'GREAT RECALL!',
+      subtitle: `${totalCards} cards completed`,
+      speechText: 'Victory! Great recall!',
+    };
+  }
+
+  return {
+    id: crypto.randomUUID(),
+    tier: 'victory',
+    badge: 'SESSION DONE',
+    displayTitle: 'TRAINING COMPLETE!',
+    subtitle: 'Missed cards strengthened for next round',
+    speechText: 'Session complete! Keep sharpening!',
+  };
+}
+
+let cachedAnnouncerVoice: SpeechSynthesisVoice | null = null;
+
+function pickAnnouncerVoice(synth: SpeechSynthesis): SpeechSynthesisVoice | null {
+  const voices = synth.getVoices();
+  if (!voices || voices.length === 0) return null;
+
+  if (cachedAnnouncerVoice && voices.some((v) => v.name === cachedAnnouncerVoice?.name)) {
+    return cachedAnnouncerVoice;
+  }
+
+  const englishVoices = voices.filter((v) => v.lang.toLowerCase().startsWith('en'));
+  const pool = englishVoices.length > 0 ? englishVoices : voices;
+
+  const preferredKeywords = [
+    'natural',
+    'google us english',
+    'google uk english male',
+    'daniel',
+    'alex',
+    'ryan',
+    'guy',
+    'david',
+    'aria',
+    'samantha',
+  ];
+
+  for (const kw of preferredKeywords) {
+    const match = pool.find((v) => v.name.toLowerCase().includes(kw));
+    if (match) {
+      cachedAnnouncerVoice = match;
+      return match;
+    }
+  }
+
+  cachedAnnouncerVoice = pool[0] ?? null;
+  return cachedAnnouncerVoice;
+}
+
+export function playAnnouncerStinger(tier: AnnouncerTier): void {
+  void (async () => {
+    try {
+      const ready = await ensureReadyAudio();
+      if (!ready) return;
+      const { ctx, output } = ready;
+      const now = ctx.currentTime;
+
+      const boom = ctx.createOscillator();
+      const boomGain = ctx.createGain();
+      boom.type = 'triangle';
+      boom.frequency.setValueAtTime(tier === 'rank' || tier === 'victory' ? 140 : 120, now);
+      boom.frequency.exponentialRampToValueAtTime(48, now + 0.24);
+      boomGain.gain.setValueAtTime(0.001, now);
+      boomGain.gain.exponentialRampToValueAtTime(0.24, now + 0.015);
+      boomGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.26);
+      boom.connect(boomGain);
+      boomGain.connect(output);
+      boom.start(now);
+      boom.stop(now + 0.28);
+
+      const shimmer = ctx.createOscillator();
+      const shimmerGain = ctx.createGain();
+      shimmer.type = 'sine';
+      const baseHz = tier === 'victory' || tier === 'rank' ? 587.33 : 493.88;
+      shimmer.frequency.setValueAtTime(baseHz, now + 0.02);
+      shimmer.frequency.exponentialRampToValueAtTime(baseHz * 1.5, now + 0.18);
+      shimmerGain.gain.setValueAtTime(0.0001, now + 0.02);
+      shimmerGain.gain.exponentialRampToValueAtTime(0.11, now + 0.045);
+      shimmerGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.25);
+      shimmer.connect(shimmerGain);
+      shimmerGain.connect(output);
+      shimmer.start(now + 0.02);
+      shimmer.stop(now + 0.27);
+    } catch {
+      // Ignore Web Audio failures silently
+    }
+  })();
+}
+
+export function speakAnnouncerLine(
+  text: string,
+  options?: { tier?: AnnouncerTier; withStinger?: boolean; delayMs?: number }
+): void {
+  if (typeof window === 'undefined') return;
+  const { tier = 'streak', withStinger = true, delayMs = 95 } = options ?? {};
+
+  if (withStinger) {
+    playAnnouncerStinger(tier);
+  }
+
+  if (!('speechSynthesis' in window)) return;
+
+  const triggerSpeech = () => {
+    try {
+      const synth = window.speechSynthesis;
+      synth.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      const voice = pickAnnouncerVoice(synth);
+      if (voice) {
+        utterance.voice = voice;
+      }
+      utterance.lang = voice?.lang || 'en-US';
+      utterance.pitch = tier === 'victory' || tier === 'rank' ? 0.9 : 0.86;
+      utterance.rate = 1.04;
+      utterance.volume = 0.95;
+      synth.speak(utterance);
+    } catch {
+      // Ignore speech synthesis errors silently
+    }
+  };
+
+  if (delayMs > 0) {
+    window.setTimeout(triggerSpeech, delayMs);
+  } else {
+    triggerSpeech();
+  }
+}
+
+export function stopAnnouncerVoiceover(): void {
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    try {
+      window.speechSynthesis.cancel();
+    } catch {
+      // ignore
+    }
+  }
+}
 
 export function playRewardSound(kind: RewardSoundKind, combo: number = 0): void {
   void (async () => {

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
 import type { Deck, Flashcard } from '../types/flashcard';
 import { getLocalDateString } from '../lib/spacedRepetition';
-import { PdfPageCanvas } from './PdfPageCanvas';
+import { DocumentPageView } from './DocumentPageView';
 
 interface DeckDetailViewProps {
   deck: Deck;
@@ -237,8 +237,10 @@ export const DeckDetailView: React.FC<DeckDetailViewProps> = ({
                           QUESTION (PAGE {card.questionPage})
                         </p>
                         <div className="rounded-sm overflow-hidden border border-[#C6BEB0]">
-                          <PdfPageCanvas
-                            pdfFileId={card.pdfFileId!}
+                          <DocumentPageView
+                            fileId={card.pdfFileId!}
+                            documentKind={card.documentKind}
+                            sourceFileName={card.sourceFileName}
                             pageNumber={card.questionPage!}
                             fitMode="contain"
                             maxHeightPx={540}
@@ -251,8 +253,10 @@ export const DeckDetailView: React.FC<DeckDetailViewProps> = ({
                         </p>
                         {card.answerPage ? (
                           <div className="rounded-sm overflow-hidden border border-[#C6BEB0]">
-                            <PdfPageCanvas
-                              pdfFileId={card.pdfFileId!}
+                            <DocumentPageView
+                              fileId={card.pdfFileId!}
+                              documentKind={card.documentKind}
+                              sourceFileName={card.sourceFileName}
                               pageNumber={card.answerPage}
                               fitMode="contain"
                               maxHeightPx={540}
@@ -260,7 +264,7 @@ export const DeckDetailView: React.FC<DeckDetailViewProps> = ({
                           </div>
                         ) : (
                           <div className="h-40 recessed-well rounded-sm flex items-center justify-center font-mono text-xs text-[#5B5245]">
-                            No even answer page in PDF
+                            No even answer page in document
                           </div>
                         )}
                       </div>

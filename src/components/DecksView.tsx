@@ -9,7 +9,8 @@ import {
   isCardDue,
 } from '../lib/spacedRepetition';
 import { getRankInfo, type RewardProfile } from '../lib/rewards';
-import { PdfPageCanvas } from './PdfPageCanvas';
+import { isSupportedStudyFile } from '../lib/documentFiles';
+import { DocumentPageView } from './DocumentPageView';
 import { MetricTooltip } from './MetricTooltip';
 
 interface DecksViewProps {
@@ -60,8 +61,8 @@ export const DecksView: React.FC<DecksViewProps> = ({
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDraggingOver(false);
-    const files = Array.from(e.dataTransfer.files).filter(
-      (f) => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
+    const files = Array.from(e.dataTransfer.files).filter((f) =>
+      isSupportedStudyFile(f)
     );
     if (files.length > 0) {
       void onDropPdfFiles(files);
@@ -94,11 +95,11 @@ export const DecksView: React.FC<DecksViewProps> = ({
         <section className="py-6 sm:py-12 text-center space-y-12">
           <div className="max-w-xl mx-auto space-y-4">
             <h1 className="font-serif-display text-4xl sm:text-5xl font-semibold tracking-tight text-[#1F1A14] leading-[1.1] text-balance drop-shadow-[0_1px_0_rgba(255,255,255,0.85)]">
-              Drop a PDF. Start recalling.
+              Drop a PDF, DOCX, or CSV. Start recalling.
             </h1>
             <p className="text-base sm:text-lg text-[#564D40] leading-relaxed text-balance">
-              Odd pages become physical question cards. Even pages become answer sheets. Stored
-              privately on your device.
+              PDF &amp; DOCX pair odd/even pages as-is. CSV imports Question &amp; Answer rows onto
+              ruled index cards. Stored privately on your device.
             </p>
 
             <div className="flex flex-wrap items-center justify-center gap-4 pt-3">
@@ -107,7 +108,7 @@ export const DecksView: React.FC<DecksViewProps> = ({
                 onClick={onGoToImport}
                 className="px-6 py-2.5 text-sm font-semibold rounded-lg btn-primary-tactile transition-all cursor-pointer"
               >
-                Choose PDFs
+                Choose Files
               </button>
 
               <button
@@ -133,7 +134,7 @@ export const DecksView: React.FC<DecksViewProps> = ({
                   How does spaced repetition defeat the Ebbinghaus forgetting curve?
                 </p>
                 <span className="font-mono text-[11px] text-[#7A6F5E]">
-                  Rendered as-is from your PDF
+                  Rendered from PDF, DOCX, or CSV
                 </span>
               </div>
             </div>
@@ -187,7 +188,7 @@ export const DecksView: React.FC<DecksViewProps> = ({
                 onClick={onGoToImport}
                 className="px-4 py-2 text-xs font-semibold rounded-lg btn-primary-tactile transition-all cursor-pointer"
               >
-                Add PDF
+                Add File
               </button>
             </div>
           </section>
@@ -328,6 +329,9 @@ export const DecksView: React.FC<DecksViewProps> = ({
             {decks.map((deck) => {
               const deckCards = cards.filter((c) => c.deckId === deck.id);
               const firstPdfCard = deckCards.find((c) => c.pdfFileId && c.questionPage);
+              const firstTextCard = !firstPdfCard
+                ? deckCards.find((c) => Boolean(c.questionText))
+                : undefined;
               const dueCount = deckCards.filter((c) => isCardDue(c, todayStr)).length;
               const readiness = calculateDeckReadiness(
                 deckCards,
@@ -345,12 +349,25 @@ export const DecksView: React.FC<DecksViewProps> = ({
                   <div className="flex gap-5 items-start">
                     {firstPdfCard ? (
                       <div className="w-24 shrink-0 rounded-sm overflow-hidden border border-[#C3BBA9] shadow-[0_2px_6px_rgba(30,22,12,0.16)] bg-white">
-                        <PdfPageCanvas
-                          pdfFileId={firstPdfCard.pdfFileId!}
+                        <DocumentPageView
+                          fileId={firstPdfCard.pdfFileId!}
+                          documentKind={firstPdfCard.documentKind}
+                          sourceFileName={firstPdfCard.sourceFileName}
                           pageNumber={firstPdfCard.questionPage!}
                           fitMode="contain"
                           maxHeightPx={136}
                         />
+                      </div>
+                    ) : firstTextCard ? (
+                      <div className="w-24 h-[136px] shrink-0 rounded-sm overflow-hidden border border-[#C3BBA9] shadow-[0_2px_6px_rgba(30,22,12,0.16)] bg-[#FCFBF7] flex flex-col">
+                        <div className="px-2 py-1 border-b border-rose-300/80 font-mono text-[8px] text-[#6E6354]">
+                          CARD 01
+                        </div>
+                        <div className="p-2 ruled-paper flex-1 overflow-hidden">
+                          <p className="font-serif-display text-[9px] leading-snug text-[#1F1A14] line-clamp-6">
+                            {firstTextCard.questionText}
+                          </p>
+                        </div>
                       </div>
                     ) : null}
 

@@ -1,9 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Trash2, AlertCircle } from 'lucide-react';
 import type { StagedPdfFile } from '../types/flashcard';
-import { createSampleStudyPdf, stagePdfFiles } from '../lib/pdfParser';
+import { createSampleStudyPdf } from '../lib/pdfParser';
+import { DOCX_MIME } from '../lib/docxParser';
+import { buildCsvDrafts, createSampleStudyCsv } from '../lib/csvParser';
+import { isSupportedStudyFile, stageStudyFiles } from '../lib/documentFiles';
 import { getLocalDateString } from '../lib/spacedRepetition';
-import { PdfPageCanvas } from './PdfPageCanvas';
+import { DocumentPageView } from './DocumentPageView';
 
 interface PdfImportViewProps {
   initialFiles?: File[];
@@ -36,12 +39,12 @@ export const PdfImportView: React.FC<PdfImportViewProps> = ({
 
   const todayStr = getLocalDateString();
 
+  const stripDocExtension = (name: string) => name.replace(/\.(pdf|docx|csv)$/i, '');
+
   const processFiles = async (fileList: File[]) => {
-    const pdfFiles = fileList.filter(
-      (f) => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
-    );
-    if (pdfFiles.length === 0) {
-      setErrorMsg('Please choose one or more valid PDF files.');
+    const validFiles = fileList.filter((f) => isSupportedStudyFile(f));
+    if (validFiles.length === 0) {
+      setErrorMsg('Please choose one or more valid PDF, DOCX, or CSV files.');
       return;
     }
 
@@ -49,25 +52,25 @@ export const PdfImportView: React.FC<PdfImportViewProps> = ({
     setIsLoadingPdfs(true);
 
     try {
-      const results = await stagePdfFiles(pdfFiles);
+      const results = await stageStudyFiles(validFiles);
       setStagedFiles(results);
 
       const defaultTitles: Record<string, string> = {};
       results.forEach((r) => {
-        defaultTitles[r.tempFileId] = r.name.replace(/\.pdf$/i, '');
+        defaultTitles[r.tempFileId] = stripDocExtension(r.name);
       });
       setPerFileTitles(defaultTitles);
 
       if (results.length === 1) {
-        setCombinedTitle(results[0].name.replace(/\.pdf$/i, ''));
+        setCombinedTitle(stripDocExtension(results[0].name));
       } else {
-        setCombinedTitle(`Study Deck (${results.length} PDFs)`);
+        setCombinedTitle(`Study Deck (${results.length} Files)`);
       }
     } catch (err) {
       setErrorMsg(
         err instanceof Error
-          ? `Could not open PDF: ${err.message}`
-          : 'Unable to open the selected PDF.'
+          ? `Could not open file: ${err.message}`
+          : 'Unable to open the selected file.'
       );
     } finally {
       setIsLoadingPdfs(false);
@@ -101,6 +104,53 @@ export const PdfImportView: React.FC<PdfImportViewProps> = ({
     await processFiles([sampleFile]);
   };
 
+  const handleTestSampleCsv = async () => {
+    const sampleCsv = createSampleStudyCsv();
+    await processFiles([sampleCsv]);
+  };
+
+  const updateCsvMapping = (
+    tempFileId: string,
+    patch: { hasHeader?: boolean; questionCol?: number; answerCol?: number }
+  ) => {
+    setStagedFiles((prev) =>
+      prev.map((file) => {
+        if (file.tempFileId !== tempFileId || !file.csvConfig) return file;
+        const nextHasHeader = patch.hasHeader ?? file.csvConfig.hasHeader;
+        const nextQCol = patch.questionCol ?? file.csvConfig.questionCol;
+        const nextACol = patch.answerCol ?? file.csvConfig.answerCol;
+
+        const firstRow = file.csvConfig.rows[0] ?? [];
+        const maxCols = file.csvConfig.headers.length;
+        const nextHeaders = Array.from({ length: maxCols }, (_, idx) => {
+          const label = firstRow[idx]?.trim();
+          return nextHasHeader && label ? label : `Column ${idx + 1}`;
+        });
+
+        const nextDrafts = buildCsvDrafts(
+          file.tempFileId,
+          file.csvConfig.rows,
+          nextHasHeader,
+          nextQCol,
+          nextACol
+        );
+
+        return {
+          ...file,
+          pageCount: nextDrafts.length,
+          csvConfig: {
+            ...file.csvConfig,
+            hasHeader: nextHasHeader,
+            headers: nextHeaders,
+            questionCol: nextQCol,
+            answerCol: nextACol,
+          },
+          drafts: nextDrafts,
+        };
+      })
+    );
+  };
+
   const removeDraft = (tempFileId: string, tempId: string) => {
     setStagedFiles((prev) =>
       prev
@@ -130,7 +180,7 @@ export const PdfImportView: React.FC<PdfImportViewProps> = ({
       } else {
         await onSaveImportedDecks(
           stagedFiles.map((file) => ({
-            title: (perFileTitles[file.tempFileId] || file.name.replace(/\.pdf$/i, '')).trim(),
+            title: (perFileTitles[file.tempFileId] || stripDocExtension(file.name)).trim(),
             examDate: examDate || null,
             files: [file],
           }))
@@ -146,10 +196,10 @@ export const PdfImportView: React.FC<PdfImportViewProps> = ({
       <div className="flex items-end justify-between gap-4">
         <div className="space-y-1">
           <h1 className="font-serif-display text-3xl font-semibold tracking-tight text-[#1F1A14] drop-shadow-[0_1px_0_rgba(255,255,255,0.85)]">
-            Add PDFs to Desk
+            Add PDF, DOCX, or CSV to Desk
           </h1>
           <p className="text-sm text-[#564D40]">
-            Odd pages become questions. Even pages become answers. Stored raw on your device.
+            PDF &amp; DOCX pair odd/even pages as-is. CSV imports Question &amp; Answer rows onto ruled cards.
           </p>
         </div>
 
@@ -177,7 +227,7 @@ export const PdfImportView: React.FC<PdfImportViewProps> = ({
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,application/pdf"
+          accept={`.pdf,application/pdf,.docx,${DOCX_MIME},.csv,text/csv`}
           multiple
           onChange={handleFileChange}
           className="sr-only"
@@ -186,10 +236,10 @@ export const PdfImportView: React.FC<PdfImportViewProps> = ({
 
         <div className="border-2 border-dashed border-[#ACA391] rounded-lg px-6 py-10 text-center space-y-4 bg-[#E6E0D3]/60">
           <p className="font-serif-display text-xl font-semibold text-[#1F1A14]">
-            Drop one or more PDF files into the tray
+            Drop PDF, DOCX, or CSV files into the tray
           </p>
           <p className="font-mono text-xs text-[#5B5245]">
-            Processed locally in IndexedDB · Zero cloud uploads
+            Processed locally in your browser · Zero cloud uploads
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
             <button
@@ -198,7 +248,7 @@ export const PdfImportView: React.FC<PdfImportViewProps> = ({
               onClick={() => fileInputRef.current?.click()}
               className="px-5 py-2 text-sm font-semibold rounded-md btn-primary-tactile transition-all cursor-pointer disabled:opacity-50"
             >
-              {isLoadingPdfs ? 'Opening PDF…' : 'Choose PDFs'}
+              {isLoadingPdfs ? 'Opening files…' : 'Choose Files'}
             </button>
 
             <button
@@ -208,6 +258,15 @@ export const PdfImportView: React.FC<PdfImportViewProps> = ({
               className="px-4 py-2 text-sm font-semibold rounded-md btn-ivory-tactile transition-all cursor-pointer disabled:opacity-50"
             >
               Load Sample PDF
+            </button>
+
+            <button
+              type="button"
+              disabled={isLoadingPdfs}
+              onClick={handleTestSampleCsv}
+              className="px-4 py-2 text-sm font-semibold rounded-md btn-ivory-tactile transition-all cursor-pointer disabled:opacity-50"
+            >
+              Load Sample CSV
             </button>
           </div>
         </div>
@@ -232,7 +291,7 @@ export const PdfImportView: React.FC<PdfImportViewProps> = ({
                   {totalPairCount} {totalPairCount === 1 ? 'card' : 'cards'} staged
                 </h2>
                 <p className="font-mono text-xs text-[#6B6153] tabular-nums">
-                  From {stagedFiles.length} PDF{stagedFiles.length === 1 ? '' : 's'}
+                  From {stagedFiles.length} {stagedFiles.length === 1 ? 'file' : 'files'}
                 </p>
               </div>
 
@@ -342,75 +401,174 @@ export const PdfImportView: React.FC<PdfImportViewProps> = ({
           </div>
 
           {/* Physical Pair Previews */}
-          <div className="space-y-4">
-            {stagedFiles.map((file) => (
-              <div key={file.tempFileId} className="space-y-4">
-                <p className="font-mono text-xs text-[#5B5245] tabular-nums">
-                  {file.name} · {file.pageCount} pages
-                </p>
+          <div className="space-y-6">
+            {stagedFiles.map((file) => {
+              const isCsv = file.documentKind === 'csv' && Boolean(file.csvConfig);
+              return (
+                <div key={file.tempFileId} className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="font-mono text-xs text-[#5B5245] tabular-nums">
+                      {file.name} ·{' '}
+                      {isCsv
+                        ? `${file.drafts.length} ${file.drafts.length === 1 ? 'row' : 'rows'}`
+                        : `${file.pageCount} pages`}
+                    </p>
 
-                <div className="space-y-5">
-                  {file.drafts.map((draft, idx) => (
-                    <div key={draft.tempId} className="paper-sheet rounded-lg p-5 space-y-4">
-                      <div className="flex items-center justify-between font-mono text-xs text-[#6B6153] tabular-nums pb-2 border-b border-[#E5DFD2]">
-                        <span>
-                          CARD {String(idx + 1).padStart(2, '0')} · PAGE {draft.questionPage} &amp;{' '}
-                          {draft.answerPage ?? 'NO ANSWER PAGE'}
-                        </span>
+                    {isCsv && file.csvConfig && (
+                      <div className="paper-sheet rounded-lg px-4 py-2.5 flex flex-wrap items-center gap-4 text-xs">
+                        <label className="inline-flex items-center gap-2 font-medium text-[#1F1A14] cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={file.csvConfig.hasHeader}
+                            onChange={(e) =>
+                              updateCsvMapping(file.tempFileId, {
+                                hasHeader: e.target.checked,
+                              })
+                            }
+                            className="rounded border-[#ACA391] text-[#194BB8] cursor-pointer"
+                          />
+                          <span>First row is header</span>
+                        </label>
 
-                        <button
-                          type="button"
-                          aria-label={`Remove card ${idx + 1}`}
-                          onClick={() => removeDraft(file.tempFileId, draft.tempId)}
-                          className="p-1 text-[#7A6F5E] hover:text-[#B91C1C] cursor-pointer"
-                        >
-                          <Trash2 className="w-4 h-4" aria-hidden="true" />
-                        </button>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="space-y-1.5">
-                          <span className="block font-mono text-[11px] font-medium text-[#6B6153]">
-                            QUESTION (PAGE {draft.questionPage})
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-[11px] text-[#6B6153]">
+                            Question:
                           </span>
-                          <div className="rounded-sm overflow-hidden border border-[#C6BEB0] shadow-inner">
-                            <PdfPageCanvas
-                              pdfFileId={file.tempFileId}
-                              pageNumber={draft.questionPage}
-                              buffer={file.data}
-                              fitMode="contain"
-                              maxHeightPx={560}
-                            />
+                          <select
+                            aria-label={`Question column for ${file.name}`}
+                            value={file.csvConfig.questionCol}
+                            onChange={(e) =>
+                              updateCsvMapping(file.tempFileId, {
+                                questionCol: Number(e.target.value),
+                              })
+                            }
+                            className="px-2.5 py-1 text-xs font-semibold rounded btn-ivory-tactile cursor-pointer"
+                          >
+                            {file.csvConfig.headers.map((header, colIdx) => (
+                              <option key={colIdx} value={colIdx}>
+                                {header}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-[11px] text-[#166534]">
+                            Answer:
+                          </span>
+                          <select
+                            aria-label={`Answer column for ${file.name}`}
+                            value={file.csvConfig.answerCol}
+                            onChange={(e) =>
+                              updateCsvMapping(file.tempFileId, {
+                                answerCol: Number(e.target.value),
+                              })
+                            }
+                            className="px-2.5 py-1 text-xs font-semibold rounded btn-ivory-tactile cursor-pointer"
+                          >
+                            {file.csvConfig.headers.map((header, colIdx) => (
+                              <option key={colIdx} value={colIdx}>
+                                {header}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-5">
+                    {file.drafts.map((draft, idx) => (
+                      <div key={draft.tempId} className="paper-sheet rounded-lg p-5 space-y-4">
+                        <div className="flex items-center justify-between font-mono text-xs text-[#6B6153] tabular-nums pb-2 border-b border-[#E5DFD2]">
+                          <span>
+                            {isCsv
+                              ? `CARD ${String(idx + 1).padStart(2, '0')} · CSV ROW ${draft.questionPage}`
+                              : `CARD ${String(idx + 1).padStart(2, '0')} · PAGE ${
+                                  draft.questionPage
+                                } & ${draft.answerPage ?? 'NO ANSWER PAGE'}`}
+                          </span>
+
+                          <button
+                            type="button"
+                            aria-label={`Remove card ${idx + 1}`}
+                            onClick={() => removeDraft(file.tempFileId, draft.tempId)}
+                            className="p-1 text-[#7A6F5E] hover:text-[#B91C1C] cursor-pointer"
+                          >
+                            <Trash2 className="w-4 h-4" aria-hidden="true" />
+                          </button>
+                        </div>
+
+                        {isCsv ? (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="space-y-1.5">
+                              <span className="block font-mono text-[11px] font-medium text-[#6B6153]">
+                                QUESTION
+                              </span>
+                              <div className="p-5 ruled-paper min-h-[140px] rounded-sm border border-[#DED8C8] bg-[#FCFBF7] font-serif-display text-base text-[#1F1A14] whitespace-pre-wrap">
+                                {draft.questionText}
+                              </div>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <span className="block font-mono text-[11px] font-medium text-[#166534]">
+                                ANSWER
+                              </span>
+                              <div className="p-5 ruled-paper min-h-[140px] rounded-sm border border-[#DED8C8] bg-[#FCFBF7] text-sm text-[#1F1A14] whitespace-pre-wrap">
+                                {draft.answerText || 'No answer in this row.'}
+                              </div>
+                            </div>
                           </div>
-                        </div>
+                        ) : (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="space-y-1.5">
+                              <span className="block font-mono text-[11px] font-medium text-[#6B6153]">
+                                QUESTION (PAGE {draft.questionPage})
+                              </span>
+                              <div className="rounded-sm overflow-hidden border border-[#C6BEB0] shadow-inner">
+                                <DocumentPageView
+                                  fileId={file.tempFileId}
+                                  documentKind={file.documentKind}
+                                  sourceFileName={file.name}
+                                  pageNumber={draft.questionPage}
+                                  buffer={file.data}
+                                  fitMode="contain"
+                                  maxHeightPx={560}
+                                />
+                              </div>
+                            </div>
 
-                        <div className="space-y-1.5">
-                          <span className="block font-mono text-[11px] font-medium text-[#166534]">
-                            ANSWER ({draft.answerPage ? `PAGE ${draft.answerPage}` : 'MISSING'})
-                          </span>
-                          {draft.answerPage ? (
-                            <div className="rounded-sm overflow-hidden border border-[#C6BEB0] shadow-inner">
-                              <PdfPageCanvas
-                                pdfFileId={file.tempFileId}
-                                pageNumber={draft.answerPage}
-                                buffer={file.data}
-                                fitMode="contain"
-                                maxHeightPx={560}
-                              />
+                            <div className="space-y-1.5">
+                              <span className="block font-mono text-[11px] font-medium text-[#166534]">
+                                ANSWER ({draft.answerPage ? `PAGE ${draft.answerPage}` : 'MISSING'})
+                              </span>
+                              {draft.answerPage ? (
+                                <div className="rounded-sm overflow-hidden border border-[#C6BEB0] shadow-inner">
+                                  <DocumentPageView
+                                    fileId={file.tempFileId}
+                                    documentKind={file.documentKind}
+                                    sourceFileName={file.name}
+                                    pageNumber={draft.answerPage}
+                                    buffer={file.data}
+                                    fitMode="contain"
+                                    maxHeightPx={560}
+                                  />
+                                </div>
+                              ) : (
+                                <div className="h-44 recessed-well rounded-sm flex items-center justify-center p-4 text-center font-mono text-xs text-[#5B5245]">
+                                  Odd total page count — no even answer page follows page{' '}
+                                  {draft.questionPage}.
+                                </div>
+                              )}
                             </div>
-                          ) : (
-                            <div className="h-44 recessed-well rounded-sm flex items-center justify-center p-4 text-center font-mono text-xs text-[#5B5245]">
-                              Odd total page count — no even answer page follows page{' '}
-                              {draft.questionPage}.
-                            </div>
-                          )}
-                        </div>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}

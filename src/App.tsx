@@ -20,8 +20,10 @@ import {
   saveSession,
 } from './lib/storage';
 import {
-  clearAllCachedPdfDocuments,
-  clearCachedPdfDocument,
+  clearAllCachedStudyDocuments,
+  clearCachedStudyDocument,
+} from './lib/documentFiles';
+import {
   createSampleStudyPdf,
   stagePdfFiles,
 } from './lib/pdfParser';
@@ -30,6 +32,8 @@ import {
   loadRewardProfile,
   playRewardSound,
   saveRewardProfile,
+  speakAnnouncerLine,
+  stopAnnouncerVoiceover,
   type RewardProfile,
 } from './lib/rewards';
 import { TopBar } from './components/TopBar';
@@ -62,6 +66,26 @@ export default function App() {
       saveRewardProfile(next);
       if (nextEnabled) {
         playRewardSound('sound_on');
+      } else {
+        stopAnnouncerVoiceover();
+      }
+      return next;
+    });
+  };
+
+  const handleToggleVoiceover = () => {
+    setRewardProfile((prev) => {
+      const nextVoice = !prev.voiceoverEnabled;
+      const next = {
+        ...prev,
+        voiceoverEnabled: nextVoice,
+        soundEnabled: nextVoice ? true : prev.soundEnabled,
+      };
+      saveRewardProfile(next);
+      if (nextVoice) {
+        speakAnnouncerLine('Announcer ready!', { tier: 'skill', withStinger: true, delayMs: 60 });
+      } else {
+        stopAnnouncerVoiceover();
       }
       return next;
     });
@@ -110,7 +134,7 @@ export default function App() {
       newDecks.push({
         id: deckId,
         title: group.title,
-        description: `Stored PDF${group.files.length === 1 ? '' : 's'}: ${group.files
+        description: `Stored file${group.files.length === 1 ? '' : 's'}: ${group.files
           .map((f) => f.name)
           .join(', ')}`,
         examDate: group.examDate,
@@ -121,12 +145,35 @@ export default function App() {
       });
 
       for (const file of group.files) {
+        if (file.documentKind === 'csv') {
+          for (const draft of file.drafts) {
+            newCards.push({
+              id: crypto.randomUUID(),
+              deckId,
+              sourceFileName: file.name,
+              documentKind: 'csv',
+              questionText: draft.questionText ?? '',
+              answerText: draft.answerText ?? '',
+              stabilityDays: 0,
+              difficulty: 5.0,
+              reps: 0,
+              lapses: 0,
+              lastReviewedAt: null,
+              nextReviewDate: todayStr,
+              createdAt: nowIso,
+            });
+          }
+          continue;
+        }
+
         const pdfFileId = file.tempFileId;
         pdfsToStore.push({
           id: pdfFileId,
           name: file.name,
           size: file.size,
           pageCount: file.pageCount,
+          mimeType: file.mimeType,
+          documentKind: file.documentKind,
           data: file.data,
           createdAt: nowIso,
         });
@@ -137,6 +184,7 @@ export default function App() {
             deckId,
             pdfFileId,
             sourceFileName: file.name,
+            documentKind: file.documentKind,
             questionPage: draft.questionPage,
             answerPage: draft.answerPage ?? undefined,
             stabilityDays: 0,
@@ -211,7 +259,7 @@ export default function App() {
 
   const handleDeleteDeck = async (deckId: string) => {
     const removedPdfIds = await deleteDeckAndCards(deckId);
-    removedPdfIds.forEach((id) => clearCachedPdfDocument(id));
+    removedPdfIds.forEach((id) => clearCachedStudyDocument(id));
     await loadLocalData();
   };
 
@@ -357,6 +405,7 @@ export default function App() {
                 rewardProfile={rewardProfile}
                 onRewardProfileUpdated={setRewardProfile}
                 onToggleSound={handleToggleSound}
+                onToggleVoiceover={handleToggleVoiceover}
                 onSelectDeck={(deckId) => setSelectedDeckId(deckId)}
                 onCardUpdated={handleCardUpdated}
                 onSessionCompleted={handleSessionCompleted}
@@ -413,7 +462,7 @@ export default function App() {
         cardCount={cards.length}
         sessionCount={sessions.length}
         onDataChanged={async () => {
-          clearAllCachedPdfDocuments();
+          clearAllCachedStudyDocuments();
           setRewardProfile(loadRewardProfile());
           await loadLocalData();
         }}

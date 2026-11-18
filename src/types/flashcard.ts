@@ -1,10 +1,13 @@
 export type RecallGrade = 'again' | 'hard' | 'good' | 'easy';
+export type DocumentKind = 'pdf' | 'docx' | 'csv';
 
 export interface StoredPdfFile {
   id: string;
   name: string;
   size: number;
   pageCount: number;
+  mimeType?: string;
+  documentKind?: DocumentKind;
   data: ArrayBuffer;
   createdAt: string;
 }
@@ -14,6 +17,7 @@ export interface Flashcard {
   deckId: string;
   pdfFileId?: string;
   sourceFileName?: string;
+  documentKind?: DocumentKind;
   questionPage?: number;
   answerPage?: number;
   // Used only when a user adds a manual text card without a PDF
@@ -79,12 +83,23 @@ export interface StagedPdfFile {
   name: string;
   size: number;
   pageCount: number;
+  mimeType?: string;
+  documentKind?: DocumentKind;
   data: ArrayBuffer;
+  csvConfig?: {
+    rows: string[][];
+    headers: string[];
+    hasHeader: boolean;
+    questionCol: number;
+    answerCol: number;
+  };
   drafts: Array<{
     tempId: string;
     questionPage: number;
     answerPage: number | null;
     missingEvenPage: boolean;
+    questionText?: string;
+    answerText?: string;
   }>;
 }
 

@@ -1,5 +1,6 @@
 import type {
   Deck,
+  DocumentKind,
   Flashcard,
   StoredPdfFile,
   StudySessionRecord,
@@ -229,6 +230,8 @@ export interface SerializedPdfBackup {
   name: string;
   size: number;
   pageCount: number;
+  mimeType?: string;
+  documentKind?: DocumentKind;
   base64Data: string;
   createdAt: string;
 }
@@ -260,6 +263,8 @@ export async function exportBackup(): Promise<BackupPayload> {
       name: p.name,
       size: p.size,
       pageCount: p.pageCount,
+      mimeType: p.mimeType,
+      documentKind: p.documentKind,
       base64Data: arrayBufferToBase64(p.data),
       createdAt: p.createdAt,
     })),
@@ -288,6 +293,8 @@ export async function importBackup(payload: BackupPayload): Promise<void> {
           name: p.name,
           size: p.size,
           pageCount: p.pageCount,
+          mimeType: p.mimeType,
+          documentKind: p.documentKind,
           data: base64ToArrayBuffer(p.base64Data),
           createdAt: p.createdAt,
         } satisfies StoredPdfFile);
